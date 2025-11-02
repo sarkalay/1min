@@ -55,6 +55,19 @@ class ExistingPositionTracker:
             print(f"❌ Binance connection failed: {e}")
             return False
         return True
+
+    def setup_futures(self):
+        """✅ ADDED: Setup futures leverage"""
+        try:
+            for pair in self.available_pairs:
+                try:
+                    self.binance.futures_change_leverage(symbol=pair, leverage=self.leverage)
+                    print(f"✅ Leverage set for {pair}")
+                except Exception as e:
+                    print(f"⚠️ Leverage setup failed for {pair}: {e}")
+            print("✅ Futures setup completed!")
+        except Exception as e:
+            print(f"❌ Futures setup failed: {e}")
     
     def load_symbol_precision(self):
         try:
@@ -79,6 +92,11 @@ class ExistingPositionTracker:
             print("✅ Symbol precision loaded")
         except Exception as e:
             print(f"❌ Error loading symbol precision: {e}")
+    
+    def format_price(self, pair, price):
+        """✅ ADDED: Format price with precision"""
+        precision = self.price_precision.get(pair, 4)
+        return round(price, precision)
     
     def scan_existing_positions(self):
         """Binance ထဲမှာရှိပြီးသား position တွေကို scan လုပ်မယ်"""
