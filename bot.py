@@ -97,37 +97,56 @@ class ExistingPositionTracker:
         return round(price, precision)
     
     def scan_existing_positions(self):
-        """Binance ထဲမှာရှိပြီးသား position တွေကို scan လုပ်မယ် - FIXED"""
+        """Binance ထဲမှာရှိပြီးသား position တွေကို scan လုပ်မယ် - DEBUGGED"""
         try:
             positions = self.binance.futures_position_information()
             self.existing_positions = {}
             
+            print(f"🔍 Scanning {len(positions)} positions from Binance...")
+            
             for pos in positions:
                 pair = pos['symbol']
+                
+                # ✅ DEBUG: Print all available fields
+                if pair in self.available_pairs:
+                    print(f"📋 Available fields for {pair}: {list(pos.keys())}")
+                
                 position_amt = float(pos['positionAmt'])
                 
                 if position_amt != 0 and pair in self.available_pairs:
-                    # Existing position found
-                    entry_price = float(pos['entryPrice'])
-                    unrealized_pnl = float(pos['unrealizedProfit'])
+                    print(f"🎯 Found active position: {pair} - Amount: {position_amt}")
                     
-                    # ✅ FIXED: Handle missing leverage field
-                    try:
-                        leverage = float(pos.get('leverage', self.leverage))  # Default to 5x if not found
-                    except:
-                        leverage = self.leverage
+                    # ✅ FIXED: Safe field access with defaults
+                    entry_price = float(pos.get('entryPrice', 0))
+                    
+                    # ✅ FIXED: Handle different P&L field names
+                    unrealized_pnl = float(pos.get('unrealizedProfit', 
+                                            pos.get('unRealizedProfit', 
+                                            pos.get('unrealized_profit', 0))))
+                    
+                    leverage = float(pos.get('leverage', self.leverage))
                     
                     # Get current price
-                    ticker = self.binance.futures_symbol_ticker(symbol=pair)
-                    current_price = float(ticker['price'])
+                    try:
+                        ticker = self.binance.futures_symbol_ticker(symbol=pair)
+                        current_price = float(ticker['price'])
+                    except:
+                        current_price = entry_price
                     
-                    # Calculate P&L percentage
+                    # Calculate P&L percentage manually if needed
                     if position_amt < 0:  # SHORT
                         pnl_percent = (entry_price - current_price) / entry_price * 100 * leverage
                         direction = "SHORT"
                     else:  # LONG
                         pnl_percent = (current_price - entry_price) / entry_price * 100 * leverage
                         direction = "LONG"
+                    
+                    # Manual P&L calculation as fallback
+                    if unrealized_pnl == 0:
+                        if direction == "LONG":
+                            unrealized_pnl = (current_price - entry_price) * abs(position_amt)
+                        else:
+                            unrealized_pnl = (entry_price - current_price) * abs(position_amt)
                     
                     self.existing_positions[pair] = {
                         'direction': direction,
@@ -143,29 +162,34 @@ class ExistingPositionTracker:
                         'status': 'ACTIVE'
                     }
                     
-                    print(f"🔍 Found existing position: {pair} {direction}")
+                    print(f"✅ Successfully loaded existing position: {pair} {direction}")
+                    print(f"   Entry: ${entry_price:.4f} | Current: ${current_price:.4f}")
+                    print(f"   P&L: ${unrealized_pnl:.2f} ({pnl_percent:.2f}%)")
             
+            print(f"📊 Total existing positions found: {len(self.existing_positions)}")
             return len(self.existing_positions)
             
         except Exception as e:
             print(f"❌ Error scanning existing positions: {e}")
+            import traceback
+            traceback.print_exc()
             return 0
     
     def get_live_position_data(self, pair):
-        """Live position data ကိုရယူမယ် - FIXED"""
+        """Live position data ကိုရယူမယ် - DEBUGGED"""
         try:
             positions = self.binance.futures_position_information(symbol=pair)
             for pos in positions:
                 if pos['symbol'] == pair and float(pos['positionAmt']) != 0:
-                    entry_price = float(pos['entryPrice'])
+                    entry_price = float(pos.get('entryPrice', 0))
                     quantity = abs(float(pos['positionAmt']))
-                    unrealized_pnl = float(pos['unrealizedProfit'])
                     
-                    # ✅ FIXED: Handle missing leverage
-                    try:
-                        leverage = float(pos.get('leverage', self.leverage))
-                    except:
-                        leverage = self.leverage
+                    # ✅ FIXED: Handle different P&L field names
+                    unrealized_pnl = float(pos.get('unrealizedProfit', 
+                                            pos.get('unRealizedProfit', 
+                                            pos.get('unrealized_profit', 0))))
+                    
+                    leverage = float(pos.get('leverage', self.leverage))
                     
                     # Get current price
                     ticker = self.binance.futures_symbol_ticker(symbol=pair)
@@ -178,6 +202,13 @@ class ExistingPositionTracker:
                     else:  # LONG
                         pnl_percent = (current_price - entry_price) / entry_price * 100 * leverage
                         direction = "LONG"
+                    
+                    # Manual P&L calculation as fallback
+                    if unrealized_pnl == 0:
+                        if direction == "LONG":
+                            unrealized_pnl = (current_price - entry_price) * quantity
+                        else:
+                            unrealized_pnl = (entry_price - current_price) * quantity
                     
                     return {
                         'direction': direction,
@@ -205,6 +236,7 @@ class ExistingPositionTracker:
             live_data = self.get_live_position_data(pair)
             if live_data:
                 self.existing_positions[pair].update(live_data)
+                print(f"🔄 Updated live data for {pair}")
             else:
                 # Position closed
                 print(f"✅ EXISTING POSITION CLOSED: {pair}")
@@ -286,10 +318,12 @@ class ExistingPositionTracker:
     def can_open_new_trade(self, pair):
         """Check if we can open new trade for this pair"""
         if pair in self.existing_positions or pair in self.bot_opened_trades:
+            print(f"🚫 Skipping {pair} - position already exists")
             return False
         
         total_positions = len(self.existing_positions) + len(self.bot_opened_trades)
         if total_positions >= self.max_concurrent_trades:
+            print(f"🚫 Skipping {pair} - max positions reached ({total_positions}/{self.max_concurrent_trades})")
             return False
         
         return True
@@ -379,7 +413,7 @@ class ExistingPositionTracker:
                 "take_profit": take_profit,
                 "entry_time": time.time(),
                 "source": "BOT",
-                "status": "ACTIVE"
+                "status": 'ACTIVE'
             }
             
             print(f"🚀 BOT TRADE ACTIVATED: {pair} {direction}")
