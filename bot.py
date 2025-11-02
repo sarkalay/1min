@@ -487,48 +487,58 @@ class MultiPairScalpingTrader:
         return market_data
     
     def get_scalping_decision(self, market_data):
-        """CONFIDENT AI VERSION - FORCE 60%+ CONFIDENCE"""
+        """SELECTIVE AI VERSION - REALISTIC TRADE/SKIP DECISIONS"""
         pair = list(market_data.keys())[0]
         data = market_data[pair]
         price = data['price']
         
         prompt = f"""
-        URGENT: CONFIDENT SCALPING ANALYSIS NEEDED FOR {pair}
-        
+        REALISTIC SCALPING ANALYSIS FOR {pair}:
+
         CURRENT MARKET DATA:
         - Price: ${price}
         - 1H Change: {data.get('change_1h', 0):.2f}%
         - Volume Ratio: {data.get('volume_ratio', 1):.2f}x
         - Volatility: {data.get('volatility', 0):.2f}%
+        - 1H Range: ${data.get('low_1h', price):.2f} - ${data.get('high_1h', price):.2f}
+
+        🔍 **BE REALISTIC - NOT EVERY SETUP IS GOOD:**
         
-        🔥 CRITICAL INSTRUCTIONS:
-        - BE MORE CONFIDENT - this is scalping, not long-term investing
-        - Look for ANY reasonable 0.5-1% move opportunity
-        - Minimum confidence MUST be 60%+
-        - We have tight stops (0.5%) so risk is controlled
-        - Multiple pairs = diversified risk
-        
-        🎯 TRADING MINDSET: Aggressive Scalper
-        - 1% daily moves are enough for profit
-        - Quick entries/exits (5-30 minutes)
-        - Don't overthink - act on clear signals
-        
-        ⚡ FORCE HIGHER CONFIDENCE:
-        - If any decent setup exists → 65%+ confidence
-        - If unclear but potential → 60% confidence  
-        - Only skip if completely dead market
-        
-        RESPONSE (JSON):
+        **GOOD SCALPING SETUPS (TRADE):**
+        - Clear support/resistance bounce
+        - Strong volume confirmation (ratio > 1.2x)
+        - Volatility > 0.3% for movement potential
+        - Clear risk/reward (at least 1.5:1)
+        - Price near key levels with momentum
+
+        **POOR SETUPS (SKIP):**
+        - Low volume (ratio < 0.8x)
+        - Very low volatility (< 0.2%)
+        - No clear direction or choppy price action
+        - Poor risk/reward ratio
+        - Price in middle of range with no edge
+
+        ⚖️ **IMPORTANT: BE SELECTIVE**
+        - Only recommend TRADE for clear, high-probability setups
+        - Recommend SKIP for mediocre or unclear setups
+        - Realistic confidence levels (not everything is 65%+)
+
+        📊 **CURRENT ANALYSIS:**
+        - Volume: {'GOOD' if data.get('volume_ratio', 1) > 1.2 else 'LOW'} ({data.get('volume_ratio', 1):.2f}x)
+        - Volatility: {'ADEQUATE' if data.get('volatility', 0) > 0.3 else 'LOW'} ({data.get('volatility', 0):.2f}%)
+        - Momentum: {'CLEAR' if abs(data.get('change_1h', 0)) > 0.3 else 'WEAK'} ({data.get('change_1h', 0):.2f}%)
+
+        RESPONSE (JSON only):
         {{
-            "action": "TRADE",
+            "action": "TRADE/SKIP",
             "pair": "{pair}",
             "direction": "LONG/SHORT",
             "entry_price": {price},
-            "stop_loss": {price * 0.995},
-            "take_profit": {price * 1.008},
-            "confidence": 65,
-            "reason": "Confident scalping setup - looking for quick 0.8% move",
-            "urgency": "high"
+            "stop_loss": number,
+            "take_profit": number,
+            "confidence": 0-100,
+            "reason": "Honest assessment - explain WHY this is tradeable or why it should be skipped",
+            "urgency": "high/medium/low"
         }}
         """
         
@@ -541,7 +551,7 @@ class MultiPairScalpingTrader:
             payload = {
                 "model": "deepseek-chat",
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.8,  # Higher temperature for more confidence
+                "temperature": 0.3,  # Lower temperature for more realistic responses
                 "max_tokens": 500
             }
             
@@ -563,26 +573,46 @@ class MultiPairScalpingTrader:
                     if decision['action'] == 'TRADE':
                         print(f"   📈 Direction: {decision['direction']}")
                         print(f"   🎯 Reason: {decision['reason']}")
+                    else:
+                        print(f"   🚫 Reason: {decision['reason']}")
                     return decision
-        
+    
         except Exception as e:
             print(f"❌ AI API Error for {pair}: {e}")
         
-        # FALLBACK: Force trade with 70% confidence
-        print(f"🚨 USING CONFIDENT FALLBACK FOR {pair}")
-        import random
-        direction = "LONG" if random.random() < 0.5 else "SHORT"
-        return {
-            "action": "TRADE",
-            "pair": pair,
-            "direction": direction,
-            "entry_price": price,
-            "stop_loss": price * (0.995 if direction == "LONG" else 1.005),
-            "take_profit": price * (1.008 if direction == "LONG" else 0.992),
-            "confidence": 70,
-            "reason": "Confident fallback - market conditions suitable for scalping",
-            "urgency": "high"
-        }
+        # More realistic fallback
+        return self.get_realistic_fallback(market_data)
+    
+    def get_realistic_fallback(self, market_data):
+        """More selective fallback"""
+        pair = list(market_data.keys())[0]
+        data = market_data[pair]
+        
+        volume_ratio = data.get('volume_ratio', 1)
+        volatility = data.get('volatility', 0)
+        change_1h = data.get('change_1h', 0)
+        
+        # Only trade if conditions are good
+        if volume_ratio > 1.2 and volatility > 0.3 and abs(change_1h) > 0.2:
+            import random
+            direction = "LONG" if random.random() < 0.5 else "SHORT"
+            return {
+                "action": "TRADE",
+                "pair": pair,
+                "direction": direction,
+                "entry_price": data['price'],
+                "stop_loss": data['price'] * (0.995 if direction == "LONG" else 1.005),
+                "take_profit": data['price'] * (1.008 if direction == "LONG" else 0.992),
+                "confidence": 65,
+                "reason": f"Fallback: Good volume ({volume_ratio:.2f}x), volatility ({volatility:.2f}%)",
+                "urgency": "medium"
+            }
+        else:
+            return {
+                "action": "SKIP",
+                "confidence": 40,
+                "reason": f"Fallback: Poor conditions - volume {volume_ratio:.2f}x, volatility {volatility:.2f}%"
+            }
 
     def execute_scalping_trade(self, decision):
         """FIXED VERSION - PROPER ENTRY PRICE HANDLING"""
