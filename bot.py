@@ -113,46 +113,58 @@ class MultiPairScalpingTrader:
             return 50
 
     def get_quantity(self, pair, price):
-        """FIXED - Smart quantity calculation with dynamic sizing"""
+        """COMPLETELY FIXED quantity calculation"""
         try:
-            # Get smart trade size based on pair price
+            # Get dynamic trade size
             trade_size = self.get_dynamic_trade_size(pair, price)
+            print(f"🎯 {pair} target size: ${trade_size}")
             
-            # Calculate quantity
+            # Calculate base quantity
             quantity = trade_size / price
-            precision = self.quantity_precision.get(pair, 2)
+            precision = self.quantity_precision.get(pair, 3)
+            
+            # Round to correct precision
             quantity = round(quantity, precision)
             if precision == 0:
                 quantity = int(quantity)
             
-            # Binance futures minimum order value is $20
+            # BINANCE MINIMUM ENFORCEMENT - FIXED
             min_order_value = 20
             trade_value = quantity * price
             
-            # Ensure we meet Binance minimum
+            print(f"🔢 Initial: {quantity} {pair} = ${trade_value:.2f}")
+            
+            # If below minimum, calculate proper quantity
             if trade_value < min_order_value:
-                print(f"⚠️ Below Binance minimum: ${trade_value:.2f} < ${min_order_value}")
-                min_quantity = min_order_value / price
-                quantity = round(min_quantity, precision)
+                required_quantity = min_order_value / price
+                quantity = round(required_quantity, precision)
+                if precision == 0:
+                    quantity = int(quantity)
+                
+                trade_value = quantity * price
+                print(f"🚀 Adjusted for Binance minimum: {quantity} = ${trade_value:.2f}")
+            
+            # Final validation
+            if quantity <= 0:
+                # Emergency calculation
+                quantity = round(25 / price, precision)  # Use $25 to be safe
                 if precision == 0:
                     quantity = int(quantity)
                 trade_value = quantity * price
-                print(f"🚀 Adjusted to meet minimum: {quantity} = ${trade_value:.2f}")
+                print(f"🆘 Emergency quantity: {quantity} = ${trade_value:.2f}")
             
-            # Final check for symbol minimum quantity
-            symbol_min = self.get_minimum_quantity(pair)
-            if quantity < symbol_min:
-                quantity = symbol_min
-                trade_value = quantity * price
-                print(f"📏 Using symbol minimum: {quantity} = ${trade_value:.2f}")
+            print(f"💰 FINAL: {quantity} {pair} = ${trade_value:.2f}")
             
-            print(f"💰 {pair}: {quantity} = ${trade_value:.2f} (Trade Size: ${trade_size})")
+            # Final safety check
+            if trade_value < 15:  # Still too low
+                print(f"❌ CRITICAL: Still below safe minimum: ${trade_value:.2f}")
+                return None  # Skip trade
+            
             return quantity
             
         except Exception as e:
-            print(f"❌ Quantity calculation error for {pair}: {e}")
-            # Emergency fallback
-            return self.get_minimum_quantity(pair)
+            print(f"❌ Quantity calculation failed: {e}")
+            return None
     
     def get_minimum_quantity(self, pair):
         """Get minimum quantity for a pair based on Binance requirements"""
@@ -466,56 +478,56 @@ class MultiPairScalpingTrader:
         return market_data
     
     def get_scalping_decision(self, market_data):
-    """BALANCED AI decision for both LONG and SHORT"""
-    pair = list(market_data.keys())[0]
-    data = market_data[pair]
-    price = data['price']
-    
-    prompt = f"""
-    BALANCED SCALPING ANALYSIS FOR {pair}:
-    
-    CURRENT MARKET DATA:
-    - Price: ${price}
-    - 1H Change: {data.get('change_1h', 0):.2f}%
-    - 4H Change: {data.get('change_4h', 0):.2f}%
-    - Volume Ratio: {data.get('volume_ratio', 1):.2f}x
-    - Volatility: {data.get('volatility', 0):.2f}%
-    - 1H Range: ${data.get('low_1h', price):.2f} - ${data.get('high_1h', price):.2f}
-    
-    NEUTRAL ANALYSIS - CONSIDER BOTH SIDES EQUALLY:
-    
-    BULLISH/LONG SIGNALS:
-    - Price near 1H support: ${data.get('low_1h', price):.2f}
-    - Positive momentum reversal patterns
-    - Oversold conditions (if RSI low)
-    - Support bounce potential
-    - Bullish divergence
-    
-    BEARISH/SHORT SIGNALS:
-    - Price near 1H resistance: ${data.get('high_1h', price):.2f}  
-    - Negative momentum reversal patterns
-    - Overbought conditions (if RSI high)
-    - Resistance rejection potential
-    - Bearish divergence
-    
-    IMPORTANT: Be completely neutral. If signals are balanced, prefer LONG for upward bias.
-    Current market is mixed. Look for the STRONGER setup regardless of direction.
-    
-    RESPONSE (JSON only):
-    {{
-        "action": "TRADE/SKIP",
-        "pair": "{pair}",
-        "direction": "LONG/SHORT",
-        "entry_price": {price},
-        "stop_loss": number,
-        "take_profit": number,
-        "position_size_usd": 50,
-        "confidence": 0-100,
-        "timeframe": "5-30min",
-        "reason": "BALANCED analysis - explain both bull/bear cases and why chosen direction is stronger",
-        "urgency": "high/medium/low"
-    }}
-    """
+        """BALANCED AI decision for both LONG and SHORT"""
+        pair = list(market_data.keys())[0]
+        data = market_data[pair]
+        price = data['price']
+        
+        prompt = f"""
+        BALANCED SCALPING ANALYSIS FOR {pair}:
+        
+        CURRENT MARKET DATA:
+        - Price: ${price}
+        - 1H Change: {data.get('change_1h', 0):.2f}%
+        - 4H Change: {data.get('change_4h', 0):.2f}%
+        - Volume Ratio: {data.get('volume_ratio', 1):.2f}x
+        - Volatility: {data.get('volatility', 0):.2f}%
+        - 1H Range: ${data.get('low_1h', price):.2f} - ${data.get('high_1h', price):.2f}
+        
+        NEUTRAL ANALYSIS - CONSIDER BOTH SIDES EQUALLY:
+        
+        BULLISH/LONG SIGNALS:
+        - Price near 1H support: ${data.get('low_1h', price):.2f}
+        - Positive momentum reversal patterns
+        - Oversold conditions (if RSI low)
+        - Support bounce potential
+        - Bullish divergence
+        
+        BEARISH/SHORT SIGNALS:
+        - Price near 1H resistance: ${data.get('high_1h', price):.2f}  
+        - Negative momentum reversal patterns
+        - Overbought conditions (if RSI high)
+        - Resistance rejection potential
+        - Bearish divergence
+        
+        IMPORTANT: Be completely neutral. If signals are balanced, prefer LONG for upward bias.
+        Current market is mixed. Look for the STRONGER setup regardless of direction.
+        
+        RESPONSE (JSON only):
+        {{
+            "action": "TRADE/SKIP",
+            "pair": "{pair}",
+            "direction": "LONG/SHORT",
+            "entry_price": {price},
+            "stop_loss": number,
+            "take_profit": number,
+            "position_size_usd": 50,
+            "confidence": 0-100,
+            "timeframe": "5-30min",
+            "reason": "BALANCED analysis - explain both bull/bear cases and why chosen direction is stronger",
+            "urgency": "high/medium/low"
+        }}
+        """
         
         try:
             headers = {
@@ -554,11 +566,11 @@ class MultiPairScalpingTrader:
         except Exception as e:
             print(f"❌ AI API Error for {pair}: {e}")
         
-        # Fallback to scalping logic
+        # Fallback to scalping logic with LONG bias
         return self.get_scalping_fallback(market_data)
     
     def get_scalping_fallback(self, market_data):
-        """Scalping fallback logic with both LONG and SHORT"""
+        """Fallback with LONG bias"""
         pair = list(market_data.keys())[0]
         data = market_data[pair]
         price = data['price']
@@ -566,8 +578,10 @@ class MultiPairScalpingTrader:
         volatility = data.get('volatility', 0)
         
         # More sensitive scalping triggers for auto-trading
-        if abs(change_1h) > 0.2 or volatility > 0.5:
-            if change_1h < -0.1:  # Recent dip - LONG opportunity
+        if abs(change_1h) > 0.1 or volatility > 0.3:
+            # 70% chance for LONG, 30% for SHORT - LONG bias
+            import random
+            if random.random() < 0.7:  # LONG bias
                 return {
                     "action": "TRADE",
                     "pair": pair,
@@ -578,10 +592,10 @@ class MultiPairScalpingTrader:
                     "position_size_usd": self.trade_size_usd,
                     "confidence": 65,
                     "timeframe": "10-20min",
-                    "reason": f"Quick bounce scalping: {pair} dipped {change_1h:.2f}%",
-                    "urgency": "high"
+                    "reason": f"LONG bias scalping: {pair} volatility {volatility:.2f}%, 1H change {change_1h:.2f}%",
+                    "urgency": "medium"
                 }
-            elif change_1h > 0.1:  # Recent pump - SHORT opportunity
+            else:  # SHORT
                 return {
                     "action": "TRADE",
                     "pair": pair,
@@ -592,42 +606,7 @@ class MultiPairScalpingTrader:
                     "position_size_usd": self.trade_size_usd,
                     "confidence": 65,
                     "timeframe": "10-20min",
-                    "reason": f"Pullback scalping: {pair} rose {change_1h:.2f}%, expecting retracement",
-                    "urgency": "high"
-                }
-        
-        # Random scalping in high volatility - both directions
-        import random
-        if volatility > 0.8 and random.random() > 0.6:
-            direction = "LONG" if random.random() > 0.5 else "SHORT"
-            reason = f"Volatility scalping: {pair} has {volatility:.2f}% volatility"
-            
-            if direction == "LONG":
-                return {
-                    "action": "TRADE",
-                    "pair": pair,
-                    "direction": direction,
-                    "entry_price": price,
-                    "stop_loss": round(price * (1 - self.scalp_stop_loss), 4),
-                    "take_profit": round(price * (1 + self.scalp_take_profit), 4),
-                    "position_size_usd": self.trade_size_usd,
-                    "confidence": 60,
-                    "timeframe": "5-15min",
-                    "reason": reason,
-                    "urgency": "medium"
-                }
-            else:
-                return {
-                    "action": "TRADE",
-                    "pair": pair,
-                    "direction": direction,
-                    "entry_price": price,
-                    "stop_loss": round(price * (1 + self.scalp_stop_loss), 4),
-                    "take_profit": round(price * (1 - self.scalp_take_profit), 4),
-                    "position_size_usd": self.trade_size_usd,
-                    "confidence": 60,
-                    "timeframe": "5-15min",
-                    "reason": reason,
+                    "reason": f"SHORT scalping: {pair} volatility {volatility:.2f}%, 1H change {change_1h:.2f}%",
                     "urgency": "medium"
                 }
         
@@ -667,6 +646,11 @@ class MultiPairScalpingTrader:
             
             # Calculate quantity with proper precision
             quantity = self.get_quantity(pair, current_price)
+            
+            # Check if quantity calculation failed
+            if quantity is None:
+                print(f"❌ Quantity calculation failed for {pair}, skipping trade")
+                return
             
             print(f"⚡ EXECUTING {direction}: {quantity} {pair} @ ${current_price}")
             
@@ -889,7 +873,7 @@ class MultiPairScalpingTrader:
             print(f"   Available Pairs: {len(self.available_pairs)}")
             print(f"   Active Trades: {len(self.active_trades)}/{self.max_concurrent_trades}")
             if self.active_trades:
-                print(f"   Trading Pairs: {list(self.active_trades.keys())}")
+                print(f"   Trading Pairs: {list(self.active_trades.keys())
             
             # Get AI decision for each available pair
             trade_opportunities = []
