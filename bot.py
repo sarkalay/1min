@@ -619,33 +619,12 @@ class RealOrderPositionTracker:
         except Exception as e:
             self.print_color(f"❌ Trading cycle error: {e}", Fore.RED)
 
-    def verify_quantity_calculation(self):
-        """Verify quantity calculation for all pairs with current prices"""
-        self.print_color("\n🔍 VERIFYING QUANTITY CALCULATIONS", Fore.CYAN, Style.BRIGHT)
-        self.print_color("=" * 60, Fore.CYAN)
-        
-        for pair in self.available_pairs:
-            try:
-                ticker = self.binance.futures_symbol_ticker(symbol=pair)
-                current_price = float(ticker['price'])
-                quantity = self.get_quantity(pair, current_price)
-                
-                if quantity:
-                    position_value = quantity * current_price
-                    status = "✅ GOOD" if abs(position_value - 50) < 15 else "⚠️ CHECK"
-                    color = Fore.GREEN if abs(position_value - 50) < 15 else Fore.YELLOW
-                    
-                    self.print_color(f"{status} {pair}: {quantity} = ${position_value:.2f}", color)
-                    
-            except Exception as e:
-                self.print_color(f"❌ Failed to verify {pair}: {e}", Fore.RED)
-
     def start_trading(self):
         self.print_color("🚀 STARTING REAL ORDER POSITION TRACKER WITH OCO!", Fore.CYAN, Style.BRIGHT)
         self.print_color("🔍 Scanning for existing positions in Binance...", Fore.CYAN)
         
-        # Verify quantity calculations first
-        self.verify_quantity_calculation()
+        # Skip verification and go straight to trading
+        self.print_color("⏩ Skipping quantity verification...", Fore.YELLOW)
         
         self.scan_existing_positions()
         
@@ -667,6 +646,7 @@ class RealOrderPositionTracker:
                         del self.bot_opened_trades[pair]
                         self.print_color(f"🗑️ Cleaned up closed trade: {pair}", Fore.YELLOW)
                 
+                self.print_color(f"⏳ Waiting 30 seconds for next cycle...", Fore.BLUE)
                 time.sleep(30)
                 
             except KeyboardInterrupt:
