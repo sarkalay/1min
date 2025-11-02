@@ -139,8 +139,26 @@ class MultiPairScalpingTrader:
     
     def format_price(self, pair, price):
         precision = self.price_precision.get(pair, 4)
-        return round(price, precision)
-    
+        
+        # ✅ FIXED: Check if price is valid
+        if price is None or price <= 0:
+            print(f"❌ Invalid price for {pair}: {price}")
+            return 0
+        
+        # ✅ FIXED: Use proper rounding
+        formatted_price = round(price, precision)
+        
+        # ✅ FIXED: Ensure minimum price difference for low-priced pairs
+        if pair in ["XRPUSDT", "ADAUSDT", "DOGEUSDT", "MATICUSDT"]:
+            # Low-priced pairs need minimum tick size
+            if pair == "XRPUSDT":
+                tick_size = 0.0001
+            else:
+                tick_size = 0.001
+            formatted_price = round(formatted_price / tick_size) * tick_size
+        
+        return formatted_price
+
     def setup_futures(self):
         try:
             for pair in self.reliable_pairs:
@@ -208,7 +226,8 @@ class MultiPairScalpingTrader:
         3. For LONG: stop_loss = current_price * 0.994 to 0.998, take_profit = current_price * 1.006 to 1.012
         4. For SHORT: stop_loss = current_price * 1.002 to 1.006, take_profit = current_price * 0.988 to 0.994
         5. Prices MUST be valid numbers, not None or zero
-        
+        6. STOP_LOSS and TAKE_PROFIT MUST be DIFFERENT prices
+
         Based on the data, choose either LONG or SHORT and provide exact prices.
         
         RESPONSE (JSON only):
@@ -282,28 +301,57 @@ class MultiPairScalpingTrader:
                 print("❌ AI provided invalid prices - Using simple logic")
                 return self.get_simple_decision({"dummy": {"price": current_price}})
             
-            # Validate price logic
+            # ✅ FIXED: Better price adjustment with minimum distances
+            min_distance_percent = 0.008  # 0.8% minimum distance
+            
             if direction == "LONG":
-                if take_profit <= current_price:
-                    take_profit = current_price * 1.008
-                    print("🔄 Adjusted TP for LONG")
-                if stop_loss >= current_price:
-                    stop_loss = current_price * 0.995
-                    print("🔄 Adjusted SL for LONG")
+                min_tp_distance = current_price * min_distance_percent
+                min_sl_distance = current_price * min_distance_percent
+                
+                if take_profit <= current_price + min_tp_distance:
+                    take_profit = current_price * 1.010  # 1.0% take profit
+                    print(f"🔄 Adjusted TP for LONG: {take_profit:.4f}")
+                
+                if stop_loss >= current_price - min_sl_distance:
+                    stop_loss = current_price * 0.990  # 1.0% stop loss
+                    print(f"🔄 Adjusted SL for LONG: {stop_loss:.4f}")
+                    
             elif direction == "SHORT":
-                if take_profit >= current_price:
-                    take_profit = current_price * 0.992
-                    print("🔄 Adjusted TP for SHORT")
-                if stop_loss <= current_price:
-                    stop_loss = current_price * 1.005
-                    print("🔄 Adjusted SL for SHORT")
+                min_tp_distance = current_price * min_distance_percent
+                min_sl_distance = current_price * min_distance_percent
+                
+                if take_profit >= current_price - min_tp_distance:
+                    take_profit = current_price * 0.990  # 1.0% take profit
+                    print(f"🔄 Adjusted TP for SHORT: {take_profit:.4f}")
+                
+                if stop_loss <= current_price + min_sl_distance:
+                    stop_loss = current_price * 1.010  # 1.0% stop loss
+                    print(f"🔄 Adjusted SL for SHORT: {stop_loss:.4f}")
             else:
                 print("❌ Invalid direction - Using simple logic")
                 return self.get_simple_decision({"dummy": {"price": current_price}})
             
-            # Format prices
+            # ✅ FIXED: Format prices
+            original_sl = stop_loss
+            original_tp = take_profit
             stop_loss = self.format_price(pair, stop_loss)
             take_profit = self.format_price(pair, take_profit)
+            
+            print(f"🔧 Price formatting: SL {original_sl:.4f} -> {stop_loss:.4f}, TP {original_tp:.4f} -> {take_profit:.4f}")
+            
+            # ✅ FIXED: Final validation to ensure prices are different
+            if abs(stop_loss - take_profit) < current_price * 0.005:  # Less than 0.5% difference
+                print("❌ CRITICAL: SL and TP too close after formatting!")
+                if direction == "LONG":
+                    take_profit = current_price * 1.012
+                    stop_loss = current_price * 0.988
+                else:
+                    take_profit = current_price * 0.988
+                    stop_loss = current_price * 1.012
+                
+                stop_loss = self.format_price(pair, stop_loss)
+                take_profit = self.format_price(pair, take_profit)
+                print(f"🔧 Re-adjusted: SL {stop_loss:.4f}, TP {take_profit:.4f}")
             
             decision.update({
                 "stop_loss": stop_loss,
@@ -319,7 +367,7 @@ class MultiPairScalpingTrader:
             return self.get_simple_decision({"dummy": {"price": current_price}})
 
     def get_simple_decision(self, market_data):
-        """Simple but reliable decision making"""
+        """Simple but reliable decision making - IMPROVED"""
         try:
             pair = list(market_data.keys())[0]
             data = market_data[pair]
@@ -328,16 +376,25 @@ class MultiPairScalpingTrader:
             # Simple trend following logic
             if data.get('change_1h', 0) > 0:
                 direction = "LONG"
-                stop_loss = current_price * 0.995
-                take_profit = current_price * 1.008
+                stop_loss = current_price * 0.988  # 1.2% stop loss
+                take_profit = current_price * 1.012  # 1.2% take profit
                 confidence = 60
                 reason = "Simple: Bullish trend"
             else:
                 direction = "SHORT"
-                stop_loss = current_price * 1.005
-                take_profit = current_price * 0.992
+                stop_loss = current_price * 1.012  # 1.2% stop loss
+                take_profit = current_price * 0.988  # 1.2% take profit
                 confidence = 55
                 reason = "Simple: Bearish trend"
+            
+            # ✅ FIXED: Ensure prices are different
+            if abs(stop_loss - take_profit) < current_price * 0.01:  # Less than 1% difference
+                if direction == "LONG":
+                    take_profit = current_price * 1.015
+                    stop_loss = current_price * 0.985
+                else:
+                    take_profit = current_price * 0.985
+                    stop_loss = current_price * 1.015
             
             # Format prices
             stop_loss = self.format_price(pair, stop_loss)
