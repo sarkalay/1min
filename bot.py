@@ -5,6 +5,7 @@ import time
 import re
 import numpy as np
 from binance.client import Client
+from binance.exceptions import BinanceAPIException
 from dotenv import load_dotenv
 
 # Install colorama first: pip install colorama
@@ -19,7 +20,7 @@ except ImportError:
 # Load environment variables
 load_dotenv()
 
-class ColorfulPositionTracker:
+class RealOrderPositionTracker:
     def __init__(self):
         # Load config from .env file
         self.binance_api_key = os.getenv('BINANCE_API_KEY')
@@ -45,7 +46,7 @@ class ColorfulPositionTracker:
         # Initialize Binance client
         self.binance = Client(self.binance_api_key, self.binance_secret)
         
-        self.print_color(f"🤖 EXISTING POSITION TRACKER ACTIVATED!", Fore.CYAN)
+        self.print_color(f"🤖 REAL ORDER POSITION TRACKER ACTIVATED!", Fore.CYAN)
         self.print_color(f"💵 Trade Size: ${self.trade_size_usd}", Fore.GREEN)
         self.print_color(f"📈 Max Trades: {self.max_concurrent_trades}", Fore.YELLOW)
         
@@ -112,21 +113,34 @@ class ColorfulPositionTracker:
         precision = self.price_precision.get(pair, 4)
         return round(price, precision)
     
+    def get_quantity(self, pair, price):
+        """Calculate proper quantity"""
+        try:
+            quantity = self.trade_size_usd / price
+            precision = self.quantity_precision.get(pair, 3)
+            quantity = round(quantity, precision)
+            
+            # Ensure minimum quantity
+            min_qty = 0.1
+            if quantity < min_qty:
+                quantity = min_qty
+                
+            return quantity
+        except Exception as e:
+            self.print_color(f"❌ Quantity calculation failed: {e}", Fore.RED)
+            return None
+    
     def scan_existing_positions(self):
         """Binance ထဲမှာရှိပြီးသား position တွေကို scan လုပ်မယ်"""
         try:
             positions = self.binance.futures_position_information()
             self.existing_positions = {}
             
-            self.print_color(f"🔍 Scanning {len(positions)} positions from Binance...", Fore.CYAN)
-            
             for pos in positions:
                 pair = pos['symbol']
                 position_amt = float(pos['positionAmt'])
                 
                 if position_amt != 0 and pair in self.available_pairs:
-                    self.print_color(f"🎯 Found active position: {pair} - Amount: {position_amt}", Fore.YELLOW)
-                    
                     entry_price = float(pos.get('entryPrice', 0))
                     unrealized_pnl = float(pos.get('unRealizedProfit', 0))
                     leverage = float(pos.get('leverage', self.leverage))
@@ -146,13 +160,6 @@ class ColorfulPositionTracker:
                         pnl_percent = (current_price - entry_price) / entry_price * 100 * leverage
                         direction = "LONG"
                     
-                    # Manual P&L calculation as fallback
-                    if unrealized_pnl == 0:
-                        if direction == "LONG":
-                            unrealized_pnl = (current_price - entry_price) * abs(position_amt)
-                        else:
-                            unrealized_pnl = (entry_price - current_price) * abs(position_amt)
-                    
                     self.existing_positions[pair] = {
                         'direction': direction,
                         'entry_price': entry_price,
@@ -166,13 +173,7 @@ class ColorfulPositionTracker:
                         'source': 'EXISTING',
                         'status': 'ACTIVE'
                     }
-                    
-                    pnl_color = Fore.GREEN if unrealized_pnl >= 0 else Fore.RED
-                    self.print_color(f"✅ Successfully loaded: {pair} {direction}", Fore.GREEN)
-                    self.print_color(f"   📍 Entry: ${entry_price:.4f} | 🎯 Current: ${current_price:.4f}", Fore.WHITE)
-                    self.print_color(f"   💰 P&L: ${unrealized_pnl:.2f} ({pnl_percent:.2f}%)", pnl_color)
             
-            self.print_color(f"📊 Total existing positions found: {len(self.existing_positions)}", Fore.CYAN)
             return len(self.existing_positions)
             
         except Exception as e:
@@ -202,13 +203,6 @@ class ColorfulPositionTracker:
                         pnl_percent = (current_price - entry_price) / entry_price * 100 * leverage
                         direction = "LONG"
                     
-                    # Manual P&L calculation as fallback
-                    if unrealized_pnl == 0:
-                        if direction == "LONG":
-                            unrealized_pnl = (current_price - entry_price) * quantity
-                        else:
-                            unrealized_pnl = (entry_price - current_price) * quantity
-                    
                     return {
                         'direction': direction,
                         'entry_price': entry_price,
@@ -235,7 +229,6 @@ class ColorfulPositionTracker:
             live_data = self.get_live_position_data(pair)
             if live_data:
                 self.existing_positions[pair].update(live_data)
-                self.print_color(f"🔄 Updated live data for {pair}", Fore.BLUE)
             else:
                 self.print_color(f"✅ EXISTING POSITION CLOSED: {pair}", Fore.GREEN)
                 del self.existing_positions[pair]
@@ -318,12 +311,10 @@ class ColorfulPositionTracker:
     def can_open_new_trade(self, pair):
         """Check if we can open new trade for this pair"""
         if pair in self.existing_positions or pair in self.bot_opened_trades:
-            self.print_color(f"🚫 Skipping {pair} - position already exists", Fore.YELLOW)
             return False
         
         total_positions = len(self.existing_positions) + len(self.bot_opened_trades)
         if total_positions >= self.max_concurrent_trades:
-            self.print_color(f"🚫 Skipping {pair} - max positions reached ({total_positions}/{self.max_concurrent_trades})", Fore.RED)
             return False
         
         return True
@@ -369,8 +360,8 @@ class ColorfulPositionTracker:
         
         return decision
 
-    def execute_trade(self, decision):
-        """Execute new trade (only for available pairs)"""
+    def execute_real_trade(self, decision):
+        """✅ FIXED: Execute REAL trade on Binance"""
         try:
             pair = decision["pair"]
             
@@ -380,9 +371,16 @@ class ColorfulPositionTracker:
             
             direction = decision["direction"]
             
+            # Get current price
             ticker = self.binance.futures_symbol_ticker(symbol=pair)
             current_price = float(ticker['price'])
             
+            # Calculate quantity
+            quantity = self.get_quantity(pair, current_price)
+            if quantity is None:
+                return False
+            
+            # Calculate TP/SL
             if direction == "LONG":
                 stop_loss = current_price * 0.995
                 take_profit = current_price * 1.008
@@ -393,32 +391,101 @@ class ColorfulPositionTracker:
             stop_loss = self.format_price(pair, stop_loss)
             take_profit = self.format_price(pair, take_profit)
             
-            quantity = self.trade_size_usd / current_price
-            precision = self.quantity_precision.get(pair, 3)
-            quantity = round(quantity, precision)
-            
-            if quantity < 0.1:
-                quantity = 0.1
-            
             direction_color = Fore.BLUE if direction == 'LONG' else Fore.RED
-            self.print_color(f"🎯 EXECUTING: {pair} {direction}", direction_color)
+            self.print_color(f"🎯 EXECUTING REAL TRADE: {pair} {direction}", direction_color)
             self.print_color(f"   📦 Size: {quantity} | 🎯 TP: ${take_profit} | 🛑 SL: ${stop_loss}", Fore.WHITE)
             
-            # Store in bot opened trades
-            self.bot_opened_trades[pair] = {
-                "pair": pair,
-                "direction": direction,
-                "entry_price": current_price,
-                "quantity": quantity,
-                "stop_loss": stop_loss,
-                "take_profit": take_profit,
-                "entry_time": time.time(),
-                "source": "BOT",
-                'status': 'ACTIVE'
-            }
-            
-            self.print_color(f"🚀 BOT TRADE ACTIVATED: {pair} {direction}", Fore.GREEN)
-            return True
+            # ✅ FIXED: Execute REAL market order
+            try:
+                if direction == "LONG":
+                    # Open LONG position
+                    order = self.binance.futures_create_order(
+                        symbol=pair,
+                        side='BUY',
+                        type='MARKET',
+                        quantity=quantity
+                    )
+                    self.print_color(f"✅ REAL LONG ORDER EXECUTED: {quantity} {pair} @ ${current_price}", Fore.GREEN)
+                else:
+                    # Open SHORT position
+                    order = self.binance.futures_create_order(
+                        symbol=pair,
+                        side='SELL',
+                        type='MARKET',
+                        quantity=quantity
+                    )
+                    self.print_color(f"✅ REAL SHORT ORDER EXECUTED: {quantity} {pair} @ ${current_price}", Fore.GREEN)
+                
+                # ✅ FIXED: Set REAL TP/SL orders
+                time.sleep(1)  # Wait a bit for position to open
+                
+                if direction == "LONG":
+                    # STOP LOSS for LONG
+                    self.binance.futures_create_order(
+                        symbol=pair,
+                        side='SELL',
+                        type='STOP_MARKET',
+                        quantity=quantity,
+                        stopPrice=stop_loss,
+                        timeInForce='GTC',
+                        reduceOnly=True
+                    )
+                    # TAKE PROFIT for LONG
+                    self.binance.futures_create_order(
+                        symbol=pair,
+                        side='SELL',
+                        type='TAKE_PROFIT_MARKET',
+                        quantity=quantity,
+                        stopPrice=take_profit,
+                        timeInForce='GTC',
+                        reduceOnly=True
+                    )
+                else:
+                    # STOP LOSS for SHORT
+                    self.binance.futures_create_order(
+                        symbol=pair,
+                        side='BUY',
+                        type='STOP_MARKET',
+                        quantity=quantity,
+                        stopPrice=stop_loss,
+                        timeInForce='GTC',
+                        reduceOnly=True
+                    )
+                    # TAKE PROFIT for SHORT
+                    self.binance.futures_create_order(
+                        symbol=pair,
+                        side='BUY',
+                        type='TAKE_PROFIT_MARKET',
+                        quantity=quantity,
+                        stopPrice=take_profit,
+                        timeInForce='GTC',
+                        reduceOnly=True
+                    )
+                
+                self.print_color(f"✅ REAL TP/SL ORDERS PLACED", Fore.GREEN)
+                
+                # Store trade info
+                self.bot_opened_trades[pair] = {
+                    "pair": pair,
+                    "direction": direction,
+                    "entry_price": current_price,
+                    "quantity": quantity,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "entry_time": time.time(),
+                    "source": "BOT",
+                    'status': 'ACTIVE'
+                }
+                
+                self.print_color(f"🚀 REAL TRADE ACTIVATED: {pair} {direction}", Fore.GREEN)
+                return True
+                
+            except BinanceAPIException as e:
+                self.print_color(f"❌ Binance API Error: {e}", Fore.RED)
+                return False
+            except Exception as e:
+                self.print_color(f"❌ Order execution failed: {e}", Fore.RED)
+                return False
             
         except Exception as e:
             self.print_color(f"❌ Trade execution failed: {e}", Fore.RED)
@@ -450,7 +517,7 @@ class ColorfulPositionTracker:
                             
                             if decision["action"] == "TRADE":
                                 self.print_color(f"✅ QUALIFIED: {pair}", Fore.GREEN)
-                                success = self.execute_trade(decision)
+                                success = self.execute_real_trade(decision)  # ✅ Use real trade function
                                 if success:
                                     break
             else:
@@ -460,7 +527,7 @@ class ColorfulPositionTracker:
             self.print_color(f"❌ Trading cycle error: {e}", Fore.RED)
 
     def start_trading(self):
-        self.print_color("🚀 STARTING EXISTING POSITION TRACKER!", Fore.CYAN, Style.BRIGHT)
+        self.print_color("🚀 STARTING REAL ORDER POSITION TRACKER!", Fore.CYAN, Style.BRIGHT)
         self.print_color("🔍 Scanning for existing positions in Binance...", Fore.CYAN)
         
         self.scan_existing_positions()
@@ -487,7 +554,7 @@ class ColorfulPositionTracker:
 
 if __name__ == "__main__":
     try:
-        bot = ColorfulPositionTracker()
+        bot = RealOrderPositionTracker()
         bot.start_trading()
     except Exception as e:
         print(f"❌ Failed to start bot: {e}")
