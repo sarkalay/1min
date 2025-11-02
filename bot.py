@@ -873,7 +873,7 @@ class MultiPairScalpingTrader:
             print(f"   Available Pairs: {len(self.available_pairs)}")
             print(f"   Active Trades: {len(self.active_trades)}/{self.max_concurrent_trades}")
             if self.active_trades:
-                print(f"   Trading Pairs: {list(self.active_trades.keys())
+                print(f"   Trading Pairs: {list(self.active_trades.keys())}")
             
             # Get AI decision for each available pair
             trade_opportunities = []
