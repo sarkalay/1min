@@ -113,7 +113,7 @@ class MultiPairScalpingTrader:
             return 50
 
     def get_quantity(self, pair, price):
-        """COMPLETELY FIXED quantity calculation"""
+        """FIXED quantity calculation for high-priced pairs"""
         try:
             # Get dynamic trade size
             trade_size = self.get_dynamic_trade_size(pair, price)
@@ -128,7 +128,15 @@ class MultiPairScalpingTrader:
             if precision == 0:
                 quantity = int(quantity)
             
-            # BINANCE MINIMUM ENFORCEMENT - FIXED
+            # SPECIAL HANDLING FOR HIGH-PRICED PAIRS
+            if pair == "ETHUSDT" and quantity == 0:
+                # Force minimum quantity for ETH
+                quantity = 0.01
+                trade_value = quantity * price
+                print(f"🚀 ETHUSDT forced quantity: {quantity} = ${trade_value:.2f}")
+                return quantity
+            
+            # BINANCE MINIMUM ENFORCEMENT
             min_order_value = 20
             trade_value = quantity * price
             
@@ -146,8 +154,9 @@ class MultiPairScalpingTrader:
             
             # Final validation
             if quantity <= 0:
-                # Emergency calculation
-                quantity = round(25 / price, precision)  # Use $25 to be safe
+                # Emergency calculation - use higher minimum
+                emergency_size = 50  # Increased from 25
+                quantity = round(emergency_size / price, precision)
                 if precision == 0:
                     quantity = int(quantity)
                 trade_value = quantity * price
@@ -156,9 +165,9 @@ class MultiPairScalpingTrader:
             print(f"💰 FINAL: {quantity} {pair} = ${trade_value:.2f}")
             
             # Final safety check
-            if trade_value < 15:  # Still too low
+            if trade_value < 15:
                 print(f"❌ CRITICAL: Still below safe minimum: ${trade_value:.2f}")
-                return None  # Skip trade
+                return None
             
             return quantity
             
@@ -576,7 +585,7 @@ class MultiPairScalpingTrader:
         }
 
     def execute_scalping_trade(self, decision):
-        """EXECUTE TRADE IMMEDIATELY - FIXED VERSION"""
+        """FIXED VERSION - PROPER ENTRY PRICE HANDLING"""
         try:
             pair = decision["pair"]
             direction = decision["direction"]
@@ -593,7 +602,7 @@ class MultiPairScalpingTrader:
                 print(f"⚠️ Already have active trade for {pair}, skipping")
                 return False
             
-            # Get current price
+            # Get current price FIRST
             ticker = self.binance.futures_symbol_ticker(symbol=pair)
             current_price = float(ticker['price'])
             print(f"💰 Current {pair} price: ${current_price}")
@@ -606,6 +615,10 @@ class MultiPairScalpingTrader:
             
             print(f"⚡ QUANTITY: {quantity} {pair}")
             
+            # USE CURRENT PRICE as entry price (SAFER)
+            entry_price = current_price
+            print(f"🎯 Using current price as entry: ${entry_price}")
+            
             # MARKET ENTRY
             try:
                 if direction == "LONG":
@@ -615,8 +628,19 @@ class MultiPairScalpingTrader:
                         type='MARKET',
                         quantity=quantity
                     )
-                    entry_price = float(order.get('avgPrice', current_price))
-                    print(f"✅ LONG ENTRY: {quantity} {pair} @ ${entry_price}")
+                    print(f"✅ LONG ENTRY ORDER PLACED: {quantity} {pair}")
+                    
+                    # Try to get actual entry price, but use current_price as fallback
+                    try:
+                        executed_price = float(order.get('avgPrice', 0))
+                        if executed_price > 0.1:  # Valid price check
+                            entry_price = executed_price
+                            print(f"📊 Actual Entry Price: ${entry_price}")
+                        else:
+                            print(f"⚠️ Using current price as entry: ${entry_price}")
+                    except:
+                        print(f"⚠️ Using current price as entry: ${entry_price}")
+                        
                 else:  # SHORT
                     order = self.binance.futures_create_order(
                         symbol=pair,
@@ -624,25 +648,48 @@ class MultiPairScalpingTrader:
                         type='MARKET',
                         quantity=quantity
                     )
-                    entry_price = float(order.get('avgPrice', current_price))
-                    print(f"✅ SHORT ENTRY: {quantity} {pair} @ ${entry_price}")
+                    print(f"✅ SHORT ENTRY ORDER PLACED: {quantity} {pair}")
+                    
+                    # Try to get actual entry price
+                    try:
+                        executed_price = float(order.get('avgPrice', 0))
+                        if executed_price > 0.1:
+                            entry_price = executed_price
+                            print(f"📊 Actual Entry Price: ${entry_price}")
+                        else:
+                            print(f"⚠️ Using current price as entry: ${entry_price}")
+                    except:
+                        print(f"⚠️ Using current price as entry: ${entry_price}")
+                        
             except Exception as order_error:
                 print(f"❌ Entry order failed: {order_error}")
                 return False
             
-            # Calculate TP/SL
+            # VALIDATE ENTRY PRICE
+            if entry_price <= 0.1:
+                print(f"❌ INVALID ENTRY PRICE: ${entry_price}")
+                return False
+            
+            # Calculate TP/SL with VALIDATED entry price
             if direction == "LONG":
                 stop_loss = entry_price * (1 - self.scalp_stop_loss)
                 take_profit = entry_price * (1 + self.scalp_take_profit)
+                print(f"🎯 LONG: Entry=${entry_price}, TP=${take_profit:.4f}, SL=${stop_loss:.4f}")
             else:  # SHORT
                 stop_loss = entry_price * (1 + self.scalp_stop_loss)
                 take_profit = entry_price * (1 - self.scalp_take_profit)
+                print(f"🎯 SHORT: Entry=${entry_price}, TP=${take_profit:.4f}, SL=${stop_loss:.4f}")
             
             # Format prices
             stop_loss = self.format_price(pair, stop_loss)
             take_profit = self.format_price(pair, take_profit)
             
-            print(f"🎯 {direction}: Entry=${entry_price}, TP=${take_profit}, SL=${stop_loss}")
+            # VALIDATE TP/SL PRICES
+            if stop_loss <= 0.01 or take_profit <= 0.01:
+                print(f"❌ INVALID TP/SL: TP=${take_profit}, SL=${stop_loss}")
+                return False
+            
+            print(f"✅ VALIDATED PRICES: TP=${take_profit}, SL=${stop_loss}")
             
             # Place TP/SL orders
             try:
@@ -688,9 +735,12 @@ class MultiPairScalpingTrader:
                         timeInForce='GTC',
                         reduceOnly=True
                     )
+                    
+                print(f"✅ TP/SL ORDERS PLACED SUCCESSFULLY")
+                
             except Exception as sl_tp_error:
                 print(f"❌ TP/SL order failed: {sl_tp_error}")
-                # Close position if TP/SL fails
+                # Try to close position
                 try:
                     if direction == "LONG":
                         self.binance.futures_create_order(
@@ -725,7 +775,7 @@ class MultiPairScalpingTrader:
                 "confidence": decision["confidence"]
             }
             
-            print(f"🚀 TRADE ACTIVATED: {pair} {direction}")
+            print(f"🚀 TRADE SUCCESSFULLY ACTIVATED: {pair} {direction}")
             print(f"📊 Active Trades: {list(self.active_trades.keys())}")
             return True
             
