@@ -18,7 +18,7 @@ class MultiPairScalpingTrader:
         self.deepseek_key = os.getenv('DEEPSEEK_API_KEY')
         
         # SCALPING parameters
-        self.trade_size_usd = 100  # $100 per trade
+        self.trade_size_usd = 50   # $50 per trade
         self.leverage = 5          # 5x leverage
         self.risk_percentage = 1.0
         self.scalp_take_profit = 0.008  # 0.8% for scalping
@@ -184,7 +184,7 @@ class MultiPairScalpingTrader:
                     pairs = recommendation.get("recommended_pairs", [])
                     pairs = [p for p in pairs if p not in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]]
                     print(f"✅ AI Recommended Pairs: {pairs}")
-                    return pairs[:8]
+                    return pairs[:8]  # Maximum 8 pairs
         except Exception as e:
             print(f"❌ AI pair selection error: {e}")
         
@@ -204,6 +204,9 @@ class MultiPairScalpingTrader:
                     continue
                     
                 ticker = self.binance.futures_symbol_ticker(symbol=pair)
+                if 'price' not in ticker or not ticker['price']:
+                    continue
+                    
                 price = float(ticker['price'])
                 
                 klines = self.binance.futures_klines(symbol=pair, interval=Client.KLINE_INTERVAL_15MINUTE, limit=20)
@@ -234,21 +237,54 @@ class MultiPairScalpingTrader:
         data = market_data[pair]
         price = data['price']
         
-        # SIMPLE DECISION - Always trade
-        import random
-        direction = "LONG" if random.random() < 0.5 else "SHORT"
+        # AI ကို TP/SL သတ်မှတ်ခိုင်းပါ
+        prompt = f"""
+        BINANCE FUTURES SCALPING DECISION for {pair}:
+        Current Price: ${price}
+        1H Change: {data['change_1h']:.2f}%
+        Volume Ratio: {data['volume_ratio']:.2f}
         
-        return {
+        Give scalping decision with EXACT take-profit and stop-loss prices.
+        Use 0.5-1% stop-loss and 0.8-1.5% take-profit for scalping.
+        
+        RESPONSE (JSON only):
+        {{
             "action": "TRADE",
-            "pair": pair,
-            "direction": direction,
-            "entry_price": price,
-            "stop_loss": price * (0.995 if direction == "LONG" else 1.005),
-            "take_profit": price * (1.008 if direction == "LONG" else 0.992),
-            "confidence": 75,
-            "reason": "Auto-trading setup",
-            "urgency": "high"
-        }
+            "pair": "{pair}",
+            "direction": "LONG/SHORT",
+            "entry_price": {price},
+            "stop_loss": 0.6100,  // EXACT PRICE
+            "take_profit": 0.6250, // EXACT PRICE  
+            "confidence": 85,
+            "reason": "Technical breakout with high volume"
+        }}
+        """
+        
+        try:
+            headers = {"Authorization": f"Bearer {self.deepseek_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": "deepseek-chat", 
+                "messages": [{"role": "user", "content": prompt}], 
+                "temperature": 0.3,
+                "max_tokens": 500
+            }
+            
+            response = requests.post("https://api.deepseek.com/v1/chat/completions", 
+                                   headers=headers, json=payload, timeout=20)
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result['choices'][0]['message']['content']
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    decision = json.loads(json_match.group())
+                    print(f"🤖 AI Decision: {decision}")
+                    return decision
+        except Exception as e:
+            print(f"❌ AI decision error: {e}")
+        
+        # Fallback
+        return {"action": "WAIT", "reason": "AI decision failed"}
 
     def execute_scalping_trade(self, decision):
         try:
@@ -284,47 +320,15 @@ class MultiPairScalpingTrader:
                 print(f"❌ Entry order failed: {e}")
                 return False
             
-            # UNIVERSAL TP/SL CALCULATION
-            if direction == "LONG":
-                stop_loss = entry_price * 0.995
-                take_profit = entry_price * 1.008
-            else:
-                stop_loss = entry_price * 1.005
-                take_profit = entry_price * 0.992
+            # ✅ AI ကပေးတဲ့ TP/SL ကိုသုံးပါ
+            stop_loss = decision["stop_loss"]
+            take_profit = decision["take_profit"]
             
-            # Format prices with proper precision
+            # Format prices only
             stop_loss = self.format_price(pair, stop_loss)
             take_profit = self.format_price(pair, take_profit)
             
-            # VALIDATE PRICES FOR ALL PAIR TYPES
-            print(f"🔧 Validating prices for {pair}...")
-            
-            if direction == "LONG":
-                if take_profit <= entry_price:
-                    take_profit = self.format_price(pair, entry_price * 1.01)
-                if stop_loss >= entry_price:
-                    stop_loss = self.format_price(pair, entry_price * 0.99)
-            else:
-                if take_profit >= entry_price:
-                    take_profit = self.format_price(pair, entry_price * 0.99)
-                if stop_loss <= entry_price:
-                    stop_loss = self.format_price(pair, entry_price * 1.01)
-            
-            # SPECIAL VALIDATION FOR LOW-PRICED PAIRS
-            if pair in ["ADAUSDT", "DOGEUSDT", "MATICUSDT"]:
-                max_tp_distance = 0.1  # 10% max for low-priced pairs
-                if direction == "LONG":
-                    if take_profit > entry_price * (1 + max_tp_distance):
-                        take_profit = self.format_price(pair, entry_price * (1 + max_tp_distance))
-                    if stop_loss < entry_price * (1 - max_tp_distance):
-                        stop_loss = self.format_price(pair, entry_price * (1 - max_tp_distance))
-                else:
-                    if take_profit < entry_price * (1 - max_tp_distance):
-                        take_profit = self.format_price(pair, entry_price * (1 - max_tp_distance))
-                    if stop_loss > entry_price * (1 + max_tp_distance):
-                        stop_loss = self.format_price(pair, entry_price * (1 + max_tp_distance))
-            
-            print(f"🎯 {direction}: Entry=${entry_price}, TP=${take_profit}, SL=${stop_loss}")
+            print(f"🎯 AI SET: Entry=${entry_price}, TP=${take_profit}, SL=${stop_loss}")
             
             # UNIVERSAL TP/SL PLACEMENT
             try:
