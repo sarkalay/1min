@@ -34,7 +34,7 @@ class MultiPairScalpingTrader:
         self.quantity_precision = {}
         self.price_precision = {}
         
-        # ✅ FIXED: Minimum quantities for each pair
+        # Minimum quantities for each pair
         self.min_quantities = {
             "SOLUSDT": 0.01,
             "AVAXUSDT": 0.1, 
@@ -50,7 +50,7 @@ class MultiPairScalpingTrader:
         # Initialize Binance client
         self.binance = Client(self.binance_api_key, self.binance_secret)
         
-        print("🤖 PERFECT FIXED BOT ACTIVATED!")
+        print("🤖 AI SCALPING BOT ACTIVATED!")
         print(f"💵 Trade Size: ${self.trade_size_usd}")
         print(f"✅ Trading Pairs: {self.reliable_pairs}")
         
@@ -106,7 +106,7 @@ class MultiPairScalpingTrader:
             # Round to correct precision
             quantity = round(quantity, precision)
             
-            # ✅ FIXED: Ensure minimum quantity for each pair
+            # Ensure minimum quantity for each pair
             min_qty = self.min_quantities.get(pair, 0.1)
             if quantity < min_qty:
                 quantity = min_qty
@@ -117,7 +117,7 @@ class MultiPairScalpingTrader:
             print(f"🎯 {pair} target size: ${trade_size}")
             print(f"🔢 Calculated: {quantity} {pair} = ${trade_value:.2f}")
             
-            # ✅ FIXED: Better auto-adjustment
+            # Better auto-adjustment
             if trade_value < 45:  # If too small compared to target
                 required_quantity = trade_size / price
                 quantity = round(required_quantity, precision)
@@ -199,54 +199,173 @@ class MultiPairScalpingTrader:
         data = market_data[pair]
         current_price = data['price']
         
-        # Simple manual decision
-        if data['change_1h'] > 0.3 and data['volume_ratio'] > 1.1:
+        # ✅ AI ကို သုံးမယ် - BETTER PROMPT
+        prompt = f"""
+        BINANCE FUTURES SCALPING DECISION for {pair}:
+        Current Price: ${current_price}
+        1H Change: {data['change_1h']:.2f}%
+        Volume Ratio: {data['volume_ratio']:.2f}
+        
+        CRITICAL RULES:
+        1. For LONG: take_profit MUST be HIGHER than current price, stop_loss MUST be LOWER
+        2. For SHORT: take_profit MUST be LOWER than current price, stop_loss MUST be HIGHER  
+        3. Use 0.5-0.8% for stop_loss and 0.8-1.2% for take_profit
+        4. Prices MUST be different from current price
+        
+        CALCULATION EXAMPLE:
+        If LONG: stop_loss = {current_price} * 0.995, take_profit = {current_price} * 1.010
+        If SHORT: stop_loss = {current_price} * 1.005, take_profit = {current_price} * 0.990
+        
+        RESPONSE (JSON only):
+        {{
+            "action": "TRADE",
+            "pair": "{pair}",
+            "direction": "LONG/SHORT",
+            "entry_price": {current_price},
+            "stop_loss": {current_price * 0.995},
+            "take_profit": {current_price * 1.010},
+            "confidence": 75,
+            "reason": "Your analysis here"
+        }}
+        """
+        
+        try:
+            headers = {"Authorization": f"Bearer {self.deepseek_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": "deepseek-chat", 
+                "messages": [{"role": "user", "content": prompt}], 
+                "temperature": 0.3,
+                "max_tokens": 500
+            }
+            
+            response = requests.post("https://api.deepseek.com/v1/chat/completions", 
+                                   headers=headers, json=payload, timeout=15)
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result['choices'][0]['message']['content']
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    decision = json.loads(json_match.group())
+                    print(f"🤖 AI Raw Decision: {decision}")
+                    
+                    # ✅ VALIDATE AI DECISION
+                    validated_decision = self.validate_ai_decision(decision, current_price)
+                    return validated_decision
+                    
+        except Exception as e:
+            print(f"❌ AI decision error: {e}")
+        
+        # Fallback to manual if AI fails
+        return self.get_manual_decision(market_data)
+
+    def validate_ai_decision(self, decision, current_price):
+        """AI decision ကို validate လုပ်မယ်"""
+        try:
+            pair = decision["pair"]
+            direction = decision["direction"]
+            stop_loss = decision["stop_loss"]
+            take_profit = decision["take_profit"]
+            
+            # Convert to float if string
+            if isinstance(stop_loss, str):
+                stop_loss = float(stop_loss)
+            if isinstance(take_profit, str):
+                take_profit = float(take_profit)
+            
+            # Check if prices are logical
+            if direction == "LONG":
+                if take_profit <= current_price:
+                    print("❌ AI Error: TP <= Current for LONG - Auto-correcting")
+                    take_profit = current_price * 1.008
+                if stop_loss >= current_price:
+                    print("❌ AI Error: SL >= Current for LONG - Auto-correcting")
+                    stop_loss = current_price * 0.995
+            else:  # SHORT
+                if take_profit >= current_price:
+                    print("❌ AI Error: TP >= Current for SHORT - Auto-correcting")
+                    take_profit = current_price * 0.992
+                if stop_loss <= current_price:
+                    print("❌ AI Error: SL <= Current for SHORT - Auto-correcting")
+                    stop_loss = current_price * 1.005
+            
+            # Format prices
+            stop_loss = self.format_price(pair, stop_loss)
+            take_profit = self.format_price(pair, take_profit)
+            
+            # Final check
+            if direction == "LONG":
+                if take_profit <= current_price or stop_loss >= current_price:
+                    print("❌ CRITICAL: Still invalid after correction - Using manual")
+                    return self.generate_proper_prices(decision, current_price)
+            else:
+                if take_profit >= current_price or stop_loss <= current_price:
+                    print("❌ CRITICAL: Still invalid after correction - Using manual")
+                    return self.generate_proper_prices(decision, current_price)
+            
+            decision["stop_loss"] = stop_loss
+            decision["take_profit"] = take_profit
+            decision["reason"] = f"AI Decision (Validated) - {decision.get('reason', '')}"
+            
+            print(f"✅ AI Validated: {direction} | Entry: ${current_price:.4f} | SL: ${stop_loss:.4f} | TP: ${take_profit:.4f}")
+            return decision
+            
+        except Exception as e:
+            print(f"❌ AI validation failed: {e}")
+            return self.generate_proper_prices(decision, current_price)
+
+    def generate_proper_prices(self, decision, current_price):
+        """AI မှားရင် proper prices generate လုပ်မယ်"""
+        pair = decision["pair"]
+        direction = decision["direction"]
+        
+        if direction == "LONG":
+            stop_loss = current_price * 0.995  # 0.5% stop loss
+            take_profit = current_price * 1.008  # 0.8% take profit
+        else:
+            stop_loss = current_price * 1.005  # 0.5% stop loss
+            take_profit = current_price * 0.992  # 0.8% take profit
+        
+        # Format with proper precision
+        stop_loss = self.format_price(pair, stop_loss)
+        take_profit = self.format_price(pair, take_profit)
+        
+        decision["stop_loss"] = stop_loss
+        decision["take_profit"] = take_profit
+        decision["reason"] = "Auto-corrected prices (AI failed)"
+        decision["confidence"] = 60
+        
+        print(f"🔧 Auto-corrected: {direction} | SL: ${stop_loss:.4f} | TP: ${take_profit:.4f}")
+        return decision
+
+    def get_manual_decision(self, market_data):
+        """AI completely fail ဖြစ်ရင် manual fallback"""
+        pair = list(market_data.keys())[0]
+        data = market_data[pair]
+        current_price = data['price']
+        
+        # Simple manual logic as fallback
+        if data['change_1h'] > 0.2 and data['volume_ratio'] > 1.1:
             direction = "LONG"
-            stop_loss = current_price * 0.994  # 0.6% stop loss
-            take_profit = current_price * 1.006  # 0.6% take profit
-            confidence = 70
-            reason = "Bullish with volume"
-        elif data['change_1h'] < -0.3 and data['volume_ratio'] > 1.0:
-            direction = "SHORT" 
-            stop_loss = current_price * 1.006  # 0.6% stop loss
-            take_profit = current_price * 0.994  # 0.6% take profit
             confidence = 65
-            reason = "Bearish momentum"
+            reason = "Manual: Bullish trend with volume"
+        elif data['change_1h'] < -0.2 and data['volume_ratio'] > 1.0:
+            direction = "SHORT"
+            confidence = 60
+            reason = "Manual: Bearish trend"
         else:
             return {"action": "WAIT", "reason": "No clear signal"}
-        
-        # Format prices
-        stop_loss = self.format_price(pair, stop_loss)
-        take_profit = self.format_price(pair, take_profit)
-        
-        # Final validation
-        if direction == "LONG":
-            if take_profit <= current_price or stop_loss >= current_price:
-                print("❌ Invalid prices - using defaults")
-                stop_loss = current_price * 0.995
-                take_profit = current_price * 1.008
-        else:
-            if take_profit >= current_price or stop_loss <= current_price:
-                print("❌ Invalid prices - using defaults")
-                stop_loss = current_price * 1.008
-                take_profit = current_price * 0.995
-        
-        stop_loss = self.format_price(pair, stop_loss)
-        take_profit = self.format_price(pair, take_profit)
         
         decision = {
             "action": "TRADE",
             "pair": pair,
             "direction": direction,
             "entry_price": current_price,
-            "stop_loss": stop_loss,
-            "take_profit": take_profit,
             "confidence": confidence,
             "reason": reason
         }
         
-        print(f"✅ MANUAL DECISION: {direction} | Entry: ${current_price:.4f} | SL: ${stop_loss:.4f} | TP: ${take_profit:.4f}")
-        return decision
+        return self.generate_proper_prices(decision, current_price)
 
     def execute_scalping_trade(self, decision):
         try:
@@ -351,7 +470,123 @@ class MultiPairScalpingTrader:
             print(f"❌ Trade execution failed: {e}")
             return False
 
-    # ... check_scalping_trades, run_scalping_cycle, start_auto_trading methods remain the same ...
+    def check_scalping_trades(self):
+        if not self.active_trades:
+            return
+        
+        completed_trades = []
+        
+        for pair, trade_info in self.active_trades.items():
+            try:
+                positions = self.binance.futures_position_information(symbol=pair)
+                position_found = False
+                for pos in positions:
+                    if pos['symbol'] == pair and float(pos['positionAmt']) != 0:
+                        position_found = True
+                        break
+                
+                if not position_found:
+                    exit_time = time.time()
+                    trade_duration = (exit_time - trade_info["entry_time"]) / 60
+                    print(f"💰 TRADE COMPLETED: {pair}!")
+                    print(f"   Direction: {trade_info['direction']}")
+                    print(f"   Duration: {trade_duration:.1f} minutes")
+                    completed_trades.append(pair)
+                    
+            except Exception as e:
+                print(f"❌ Trade check error for {pair}: {e}")
+        
+        for pair in completed_trades:
+            del self.active_trades[pair]
+        
+        if completed_trades:
+            print(f"📊 Remaining Active Trades: {list(self.active_trades.keys())}")
+
+    def run_scalping_cycle(self):
+        try:
+            market_data = self.get_detailed_market_data()
+            
+            if not market_data:
+                print("📊 No market data available")
+                return
+            
+            print(f"\n📊 CURRENT STATUS:")
+            print(f"   Available Pairs: {len(self.available_pairs)}")
+            print(f"   Active Trades: {len(self.active_trades)}/{self.max_concurrent_trades}")
+            
+            if len(self.active_trades) >= self.max_concurrent_trades:
+                self.check_scalping_trades()
+                return
+            
+            trade_opportunities = []
+            
+            for pair in self.available_pairs:
+                if len(self.active_trades) >= self.max_concurrent_trades:
+                    break
+                    
+                if pair in self.active_trades:
+                    continue
+                    
+                if pair in market_data:
+                    pair_data = {pair: market_data[pair]}
+                    decision = self.get_scalping_decision(pair_data)
+                    
+                    if decision["action"] == "TRADE":
+                        trade_opportunities.append((decision, decision["confidence"]))
+                        print(f"✅ QUALIFIED: {pair} - {decision['confidence']}% confidence")
+            
+            trade_opportunities.sort(key=lambda x: x[1], reverse=True)
+            
+            available_slots = self.max_concurrent_trades - len(self.active_trades)
+            trade_opportunities = trade_opportunities[:available_slots]
+            
+            print(f"🎯 Trade Opportunities: {len(trade_opportunities)}")
+            
+            executed_count = 0
+            for decision, confidence in trade_opportunities:
+                if len(self.active_trades) >= self.max_concurrent_trades:
+                    break
+                    
+                print(f"🚀 EXECUTING: {decision['pair']} {decision['direction']}")
+                success = self.execute_scalping_trade(decision)
+                if success:
+                    executed_count += 1
+                    time.sleep(2)  # Small delay between trades
+            
+            print(f"📈 Executed {executed_count} trades this cycle")
+            
+            self.check_scalping_trades()
+            
+        except Exception as e:
+            print(f"❌ Scalping cycle error: {e}")
+
+    def start_auto_trading(self):
+        print("🚀 STARTING AI SCALPING BOT!")
+        
+        cycle_count = 0
+        
+        while True:
+            try:
+                cycle_count += 1
+                print(f"\n{'='*60}")
+                print(f"🔄 CYCLE {cycle_count} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                print(f"{'='*60}")
+                
+                self.run_scalping_cycle()
+                
+                if cycle_count % 10 == 0:
+                    print(f"\n📈 BOT STATUS:")
+                    print(f"   Total Cycles: {cycle_count}")
+                    print(f"   Active Trades: {len(self.active_trades)}/{self.max_concurrent_trades}")
+                
+                time.sleep(60)  # 1 minute between cycles
+                
+            except KeyboardInterrupt:
+                print(f"\n🛑 BOT STOPPED BY USER")
+                break
+            except Exception as e:
+                print(f"❌ Main loop error: {e}")
+                time.sleep(30)
 
 if __name__ == "__main__":
     try:
