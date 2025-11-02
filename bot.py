@@ -26,7 +26,7 @@ class AIScalpingTrader:
         self.stop_loss_percent = 0.005    # 0.5%
         
         # Multi-pair parameters
-        self.max_concurrent_trades = 2
+        self.max_concurrent_trades = 1
         self.available_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
         self.active_trades = {}
         
