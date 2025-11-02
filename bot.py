@@ -3,6 +3,7 @@ import requests
 import json
 import time
 import re
+import math
 import numpy as np
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
@@ -115,18 +116,51 @@ class RealOrderPositionTracker:
         return round(price, precision)
     
     def get_quantity(self, pair, price):
-        """Calculate proper quantity"""
+        """✅ CORRECTED: Calculate proper quantity for $50 position"""
         try:
-            quantity = self.trade_size_usd / price
+            # Binance FUTURES minimum quantities
+            min_quantities = {
+                "SOLUSDT": 0.01,    # 0.01 SOL minimum
+                "AVAXUSDT": 0.1,    # 0.1 AVAX minimum  
+                "XRPUSDT": 1.0,     # 1 XRP minimum
+                "LINKUSDT": 0.1,    # 0.1 LINK minimum
+                "DOTUSDT": 0.1      # 0.1 DOT minimum
+            }
+            
+            min_qty = min_quantities.get(pair, 0.1)
             precision = self.quantity_precision.get(pair, 3)
+            
+            # Calculate required quantity for $50
+            required_quantity = self.trade_size_usd / price
+            
+            # Use the larger of required quantity or minimum
+            quantity = max(required_quantity, min_qty)
             quantity = round(quantity, precision)
             
-            # Ensure minimum quantity
-            min_qty = 0.1
-            if quantity < min_qty:
-                quantity = min_qty
-                
+            # For low-priced tokens, ensure we get close to $50
+            actual_value = quantity * price
+            if actual_value < self.trade_size_usd * 0.8:  # If less than $40
+                # Add minimum units until we're close to $50
+                while actual_value < self.trade_size_usd * 0.9 and quantity < min_qty * 100:  # Safety limit
+                    quantity += min_qty
+                    quantity = round(quantity, precision)
+                    actual_value = quantity * price
+            
+            actual_value = quantity * price
+            
+            # Display calculation details
+            status_color = Fore.GREEN if abs(actual_value - self.trade_size_usd) < 10 else Fore.YELLOW
+            status_icon = "✅" if abs(actual_value - self.trade_size_usd) < 10 else "⚠️"
+            
+            self.print_color(f"{status_icon} QUANTITY CALCULATION for {pair}:", Fore.CYAN)
+            self.print_color(f"   🎯 Target: ${self.trade_size_usd}", Fore.WHITE)
+            self.print_color(f"   📈 Price: ${price:.4f}", Fore.WHITE)
+            self.print_color(f"   📦 Quantity: {quantity} {pair.replace('USDT', '')}", Fore.GREEN)
+            self.print_color(f"   💰 Actual Position: ${actual_value:.2f}", status_color)
+            self.print_color(f"   📏 Minimum: {min_qty}", Fore.WHITE)
+            
             return quantity
+            
         except Exception as e:
             self.print_color(f"❌ Quantity calculation failed: {e}", Fore.RED)
             return None
@@ -159,7 +193,7 @@ class RealOrderPositionTracker:
             ticker = self.binance.futures_symbol_ticker(symbol=pair)
             current_price = float(ticker['price'])
             
-            # Calculate quantity
+            # Calculate quantity - ✅ CORRECTED VERSION
             quantity = self.get_quantity(pair, current_price)
             if quantity is None:
                 return False
@@ -204,8 +238,6 @@ class RealOrderPositionTracker:
                 time.sleep(2)
                 
                 # ✅ Step 3: Place OCO ORDER using STOP_MARKET and TAKE_PROFIT_MARKET
-                # Binance Futures doesn't support direct OCO, so we use separate orders
-                # but we'll manage them to cancel each other when one executes
                 
                 # Place STOP LOSS order
                 sl_order = self.binance.futures_create_order(
@@ -587,9 +619,33 @@ class RealOrderPositionTracker:
         except Exception as e:
             self.print_color(f"❌ Trading cycle error: {e}", Fore.RED)
 
+    def verify_quantity_calculation(self):
+        """Verify quantity calculation for all pairs with current prices"""
+        self.print_color("\n🔍 VERIFYING QUANTITY CALCULATIONS", Fore.CYAN, Style.BRIGHT)
+        self.print_color("=" * 60, Fore.CYAN)
+        
+        for pair in self.available_pairs:
+            try:
+                ticker = self.binance.futures_symbol_ticker(symbol=pair)
+                current_price = float(ticker['price'])
+                quantity = self.get_quantity(pair, current_price)
+                
+                if quantity:
+                    position_value = quantity * current_price
+                    status = "✅ GOOD" if abs(position_value - 50) < 15 else "⚠️ CHECK"
+                    color = Fore.GREEN if abs(position_value - 50) < 15 else Fore.YELLOW
+                    
+                    self.print_color(f"{status} {pair}: {quantity} = ${position_value:.2f}", color)
+                    
+            except Exception as e:
+                self.print_color(f"❌ Failed to verify {pair}: {e}", Fore.RED)
+
     def start_trading(self):
         self.print_color("🚀 STARTING REAL ORDER POSITION TRACKER WITH OCO!", Fore.CYAN, Style.BRIGHT)
         self.print_color("🔍 Scanning for existing positions in Binance...", Fore.CYAN)
+        
+        # Verify quantity calculations first
+        self.verify_quantity_calculation()
         
         self.scan_existing_positions()
         
@@ -604,11 +660,12 @@ class RealOrderPositionTracker:
                 
                 self.run_trading_cycle()
                 
-                # Clean up old closed trades
-                closed_trades = [k for k, v in self.bot_opened_trades.items() if v['status'] == 'CLOSED' and time.time() - v['entry_time'] > 300]
-                for pair in closed_trades:
-                    del self.bot_opened_trades[pair]
-                    self.print_color(f"🗑️ Cleaned up closed trade: {pair}", Fore.YELLOW)
+                # Clean up old closed trades every 10 cycles
+                if cycle_count % 10 == 0:
+                    closed_trades = [k for k, v in self.bot_opened_trades.items() if v['status'] == 'CLOSED' and time.time() - v['entry_time'] > 300]
+                    for pair in closed_trades:
+                        del self.bot_opened_trades[pair]
+                        self.print_color(f"🗑️ Cleaned up closed trade: {pair}", Fore.YELLOW)
                 
                 time.sleep(30)
                 
