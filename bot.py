@@ -28,21 +28,30 @@ class MultiPairScalpingTrader:
         self.max_concurrent_trades = 3
         self.available_pairs = []
         self.active_trades = {}
-        # ETH, BNB ဖြုတ်ထားတယ်
         self.blacklisted_pairs = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
         
         # Precision settings
         self.quantity_precision = {}
         self.price_precision = {}
         
+        # Pair-specific settings
+        self.pair_settings = {
+            "ADAUSDT": {"min_qty": 1, "price_precision": 4},
+            "DOGEUSDT": {"min_qty": 1, "price_precision": 5},
+            "XRPUSDT": {"min_qty": 1, "price_precision": 4},
+            "SOLUSDT": {"min_qty": 0.1, "price_precision": 2},
+            "AVAXUSDT": {"min_qty": 0.1, "price_precision": 3},
+            "LINKUSDT": {"min_qty": 0.1, "price_precision": 3},
+            "DOTUSDT": {"min_qty": 0.1, "price_precision": 3},
+            "MATICUSDT": {"min_qty": 1, "price_precision": 4}
+        }
+        
         # Initialize Binance client
         self.binance = Client(self.binance_api_key, self.binance_secret)
         
-        print("🤖 MULTI-PAIR SCALPING BOT ACTIVATED!")
+        print("🤖 UNIVERSAL SCALPING BOT ACTIVATED!")
         print(f"💵 Trade Size: ${self.trade_size_usd} per trade")
         print(f"📈 Leverage: {self.leverage}x")
-        print(f"🎯 Take Profit: {self.scalp_take_profit*100}%")
-        print(f"🛡️ Stop Loss: {self.scalp_stop_loss*100}%")
         print(f"🚫 Blacklisted: {self.blacklisted_pairs}")
         
         self.validate_config()
@@ -90,12 +99,19 @@ class MultiPairScalpingTrader:
         try:
             trade_size = self.trade_size_usd
             quantity = trade_size / price
+            
+            # Get precision and minimum quantity
             precision = self.quantity_precision.get(pair, 3)
+            min_qty = self.pair_settings.get(pair, {}).get("min_qty", 1)
             
             # Round to correct precision
             quantity = round(quantity, precision)
             if precision == 0:
                 quantity = int(quantity)
+            
+            # Ensure minimum quantity
+            if quantity < min_qty:
+                quantity = min_qty
             
             trade_value = quantity * price
             
@@ -104,11 +120,12 @@ class MultiPairScalpingTrader:
             
             # Ensure minimum order value
             if trade_value < 20:
-                # Auto-adjust to meet minimum
-                required_quantity = 25 / price  # Use $25 minimum
+                required_quantity = 25 / price
                 quantity = round(required_quantity, precision)
                 if precision == 0:
                     quantity = int(quantity)
+                if quantity < min_qty:
+                    quantity = min_qty
                 trade_value = quantity * price
                 print(f"🚀 Auto-adjusted: {quantity} = ${trade_value:.2f}")
             
@@ -116,7 +133,7 @@ class MultiPairScalpingTrader:
             return quantity
             
         except Exception as e:
-            print(f"❌ Quantity calculation failed: {e}")
+            print(f"❌ Quantity calculation failed for {pair}: {e}")
             return None
     
     def format_price(self, pair, price):
@@ -125,7 +142,6 @@ class MultiPairScalpingTrader:
     
     def setup_futures(self):
         try:
-            # ETH, BNB ဖြုတ်ထားတယ်
             initial_pairs = ["SOLUSDT", "ADAUSDT", "XRPUSDT", "AVAXUSDT", "MATICUSDT", "LINKUSDT", "DOTUSDT", "DOGEUSDT"]
             for pair in initial_pairs:
                 try:
@@ -142,7 +158,6 @@ class MultiPairScalpingTrader:
         
         prompt = """
         BINANCE FUTURES SCALPING PAIR RECOMMENDATIONS (EXCLUDE BTCUSDT, ETHUSDT, BNBUSDT):
-        
         Recommend 6-10 best altcoin pairs for scalping from Binance futures.
         EXCLUDE BTC, ETH, BNB completely.
         Focus on SOL, ADA, XRP, AVAX, MATIC, LINK, DOT, DOGE, etc.
@@ -150,7 +165,7 @@ class MultiPairScalpingTrader:
         RESPONSE (JSON only):
         {
             "recommended_pairs": ["SOLUSDT", "ADAUSDT", "XRPUSDT", "AVAXUSDT", ...],
-            "reason": "These altcoin pairs have good liquidity and volatility for scalping, excluding BTC/ETH/BNB"
+            "reason": "These altcoin pairs have good liquidity and volatility for scalping"
         }
         """
         
@@ -167,14 +182,12 @@ class MultiPairScalpingTrader:
                 if json_match:
                     recommendation = json.loads(json_match.group())
                     pairs = recommendation.get("recommended_pairs", [])
-                    # Remove expensive pairs
                     pairs = [p for p in pairs if p not in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]]
-                    print(f"✅ AI Recommended Pairs (No BTC/ETH/BNB): {pairs}")
+                    print(f"✅ AI Recommended Pairs: {pairs}")
                     return pairs[:8]
         except Exception as e:
             print(f"❌ AI pair selection error: {e}")
         
-        # Fallback without ETH, BNB
         fallback_pairs = ["SOLUSDT", "ADAUSDT", "XRPUSDT", "AVAXUSDT", "MATICUSDT", "LINKUSDT", "DOTUSDT", "DOGEUSDT"]
         print(f"🔄 Using fallback pairs: {fallback_pairs}")
         return fallback_pairs
@@ -208,7 +221,6 @@ class MultiPairScalpingTrader:
                         'price': price,
                         'change_1h': price_change_1h,
                         'volume_ratio': current_volume / avg_volume if avg_volume > 0 else 1,
-                        'volatility': 0.5,  # Simplified
                     }
                 
             except Exception as e:
@@ -222,7 +234,7 @@ class MultiPairScalpingTrader:
         data = market_data[pair]
         price = data['price']
         
-        # SIMPLE DECISION - Always trade with good confidence
+        # SIMPLE DECISION - Always trade
         import random
         direction = "LONG" if random.random() < 0.5 else "SHORT"
         
@@ -272,7 +284,7 @@ class MultiPairScalpingTrader:
                 print(f"❌ Entry order failed: {e}")
                 return False
             
-            # TP/SL CALCULATION
+            # UNIVERSAL TP/SL CALCULATION
             if direction == "LONG":
                 stop_loss = entry_price * 0.995
                 take_profit = entry_price * 1.008
@@ -280,11 +292,13 @@ class MultiPairScalpingTrader:
                 stop_loss = entry_price * 1.005
                 take_profit = entry_price * 0.992
             
-            # Format and validate prices
+            # Format prices with proper precision
             stop_loss = self.format_price(pair, stop_loss)
             take_profit = self.format_price(pair, take_profit)
             
-            # Ensure prices are valid
+            # VALIDATE PRICES FOR ALL PAIR TYPES
+            print(f"🔧 Validating prices for {pair}...")
+            
             if direction == "LONG":
                 if take_profit <= entry_price:
                     take_profit = self.format_price(pair, entry_price * 1.01)
@@ -296,22 +310,81 @@ class MultiPairScalpingTrader:
                 if stop_loss <= entry_price:
                     stop_loss = self.format_price(pair, entry_price * 1.01)
             
+            # SPECIAL VALIDATION FOR LOW-PRICED PAIRS
+            if pair in ["ADAUSDT", "DOGEUSDT", "MATICUSDT"]:
+                max_tp_distance = 0.1  # 10% max for low-priced pairs
+                if direction == "LONG":
+                    if take_profit > entry_price * (1 + max_tp_distance):
+                        take_profit = self.format_price(pair, entry_price * (1 + max_tp_distance))
+                    if stop_loss < entry_price * (1 - max_tp_distance):
+                        stop_loss = self.format_price(pair, entry_price * (1 - max_tp_distance))
+                else:
+                    if take_profit < entry_price * (1 - max_tp_distance):
+                        take_profit = self.format_price(pair, entry_price * (1 - max_tp_distance))
+                    if stop_loss > entry_price * (1 + max_tp_distance):
+                        stop_loss = self.format_price(pair, entry_price * (1 + max_tp_distance))
+            
             print(f"🎯 {direction}: Entry=${entry_price}, TP=${take_profit}, SL=${stop_loss}")
             
-            # TP/SL ORDERS
+            # UNIVERSAL TP/SL PLACEMENT
             try:
                 if direction == "LONG":
-                    self.binance.futures_create_order(symbol=pair, side='SELL', type='STOP_MARKET', quantity=quantity, stopPrice=stop_loss, timeInForce='GTC', reduceOnly=True)
-                    self.binance.futures_create_order(symbol=pair, side='SELL', type='LIMIT', quantity=quantity, price=take_profit, timeInForce='GTC', reduceOnly=True)
+                    self.binance.futures_create_order(
+                        symbol=pair, side='SELL', type='STOP_MARKET', 
+                        quantity=quantity, stopPrice=stop_loss, 
+                        timeInForce='GTC', reduceOnly=True
+                    )
+                    self.binance.futures_create_order(
+                        symbol=pair, side='SELL', type='LIMIT', 
+                        quantity=quantity, price=take_profit, 
+                        timeInForce='GTC', reduceOnly=True
+                    )
                 else:
-                    self.binance.futures_create_order(symbol=pair, side='BUY', type='STOP_MARKET', quantity=quantity, stopPrice=stop_loss, timeInForce='GTC', reduceOnly=True)
-                    self.binance.futures_create_order(symbol=pair, side='BUY', type='LIMIT', quantity=quantity, price=take_profit, timeInForce='GTC', reduceOnly=True)
+                    self.binance.futures_create_order(
+                        symbol=pair, side='BUY', type='STOP_MARKET', 
+                        quantity=quantity, stopPrice=stop_loss, 
+                        timeInForce='GTC', reduceOnly=True
+                    )
+                    self.binance.futures_create_order(
+                        symbol=pair, side='BUY', type='LIMIT', 
+                        quantity=quantity, price=take_profit, 
+                        timeInForce='GTC', reduceOnly=True
+                    )
                     
                 print(f"✅ TP/SL ORDERS PLACED")
                 
             except Exception as e:
                 print(f"❌ TP/SL order failed: {e}")
-                return False
+                
+                # ALTERNATIVE METHOD FOR PROBLEMATIC PAIRS
+                try:
+                    print(f"🔄 Trying alternative TP/SL method...")
+                    if direction == "LONG":
+                        self.binance.futures_create_order(
+                            symbol=pair, side='SELL', type='TAKE_PROFIT_MARKET',
+                            quantity=quantity, stopPrice=take_profit,
+                            timeInForce='GTC', reduceOnly=True
+                        )
+                        self.binance.futures_create_order(
+                            symbol=pair, side='SELL', type='STOP_MARKET',
+                            quantity=quantity, stopPrice=stop_loss,
+                            timeInForce='GTC', reduceOnly=True
+                        )
+                    else:
+                        self.binance.futures_create_order(
+                            symbol=pair, side='BUY', type='TAKE_PROFIT_MARKET',
+                            quantity=quantity, stopPrice=take_profit,
+                            timeInForce='GTC', reduceOnly=True
+                        )
+                        self.binance.futures_create_order(
+                            symbol=pair, side='BUY', type='STOP_MARKET',
+                            quantity=quantity, stopPrice=stop_loss,
+                            timeInForce='GTC', reduceOnly=True
+                        )
+                    print(f"✅ ALTERNATIVE TP/SL SUCCESSFUL")
+                except Exception as e2:
+                    print(f"❌ Alternative also failed: {e2}")
+                    return False
             
             self.active_trades[pair] = {
                 "pair": pair,
@@ -323,10 +396,11 @@ class MultiPairScalpingTrader:
             }
             
             print(f"🚀 TRADE ACTIVATED: {pair} {direction}")
+            print(f"📊 Active Trades: {list(self.active_trades.keys())}")
             return True
             
         except Exception as e:
-            print(f"❌ Trade execution failed: {e}")
+            print(f"❌ Trade execution failed for {pair}: {e}")
             return False
 
     def check_scalping_trades(self):
@@ -419,7 +493,7 @@ class MultiPairScalpingTrader:
             print(f"❌ Scalping cycle error: {e}")
 
     def start_auto_trading(self):
-        print("🚀 STARTING SCALPING BOT (NO ETH/BNB)!")
+        print("🚀 STARTING UNIVERSAL SCALPING BOT!")
         
         cycle_count = 0
         
