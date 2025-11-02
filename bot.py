@@ -17,46 +17,50 @@ class MultiPairScalpingTrader:
         self.binance_secret = os.getenv('BINANCE_SECRET_KEY')
         self.deepseek_key = os.getenv('DEEPSEEK_API_KEY')
         
-        # SCALPING parameters
-        self.trade_size_usd = 50   # $50 per trade
-        self.leverage = 5          # 5x leverage
+        # SCALPING parameters - FIXED
+        self.trade_size_usd = 50   # $50 ပြန်ချိန်းထားတယ်
+        self.leverage = 5
         self.risk_percentage = 1.0
-        self.scalp_take_profit = 0.008  # 0.8% for scalping
-        self.scalp_stop_loss = 0.005    # 0.5% for scalping
+        self.scalp_take_profit = 0.010  # 1.0% for better execution
+        self.scalp_stop_loss = 0.006    # 0.6% 
         
         # Multi-pair parameters
         self.max_concurrent_trades = 2
         self.available_pairs = []
         self.active_trades = {}
-        self.blacklisted_pairs = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT"]
+        
+        # ✅ PROBLEMATIC PAIRS ကို ခွဲထားတယ် - MATIC ဖြုတ်, POL ထည့်
+        self.problematic_pairs = ["ADAUSDT", "DOGEUSDT"]
+        self.reliable_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT", "POLUSDT"]
         
         # Precision settings
         self.quantity_precision = {}
         self.price_precision = {}
         
-        # Pair-specific settings
-        self.pair_settings = {            
+        # Pair-specific settings - UPDATED
+        self.pair_settings = {
+            "ADAUSDT": {"min_qty": 1, "price_precision": 4},
             "DOGEUSDT": {"min_qty": 1, "price_precision": 5},
             "XRPUSDT": {"min_qty": 1, "price_precision": 4},
             "SOLUSDT": {"min_qty": 0.1, "price_precision": 2},
             "AVAXUSDT": {"min_qty": 0.1, "price_precision": 3},
             "LINKUSDT": {"min_qty": 0.1, "price_precision": 3},
             "DOTUSDT": {"min_qty": 0.1, "price_precision": 3},
-            "MATICUSDT": {"min_qty": 1, "price_precision": 4}
+            "POLUSDT": {"min_qty": 0.1, "price_precision": 3}
         }
         
         # Initialize Binance client
         self.binance = Client(self.binance_api_key, self.binance_secret)
         
-        print("🤖 UNIVERSAL SCALPING BOT ACTIVATED!")
+        print("🤖 FIXED SCALPING BOT ACTIVATED!")
         print(f"💵 Trade Size: ${self.trade_size_usd} per trade")
-        print(f"📈 Leverage: {self.leverage}x")
-        print(f"🚫 Blacklisted: {self.blacklisted_pairs}")
+        print(f"🚫 Problematic Pairs: {self.problematic_pairs}")
+        print(f"✅ Reliable Pairs: {self.reliable_pairs}")
         
         self.validate_config()
         self.setup_futures()
         self.load_symbol_precision()
-        self.available_pairs = self.get_ai_recommended_pairs()
+        self.available_pairs = self.get_safe_recommended_pairs()
     
     def validate_config(self):
         if not all([self.binance_api_key, self.binance_secret, self.deepseek_key]):
@@ -141,8 +145,8 @@ class MultiPairScalpingTrader:
     
     def setup_futures(self):
         try:
-            initial_pairs = ["SOLUSDT", "XRPUSDT", "AVAXUSDT", "MATICUSDT", "LINKUSDT", "DOTUSDT", "DOGEUSDT"]
-            for pair in initial_pairs:
+            # Reliable pairs ပဲ leverage set လုပ်မယ်
+            for pair in self.reliable_pairs:
                 try:
                     self.binance.futures_change_leverage(symbol=pair, leverage=self.leverage)
                     print(f"✅ Leverage set for {pair}")
@@ -152,50 +156,99 @@ class MultiPairScalpingTrader:
         except Exception as e:
             print(f"❌ Futures setup failed: {e}")
     
-    def get_ai_recommended_pairs(self):
-        print("🤖 AI က BTC, ETH, BNB မပါတဲ့ scalping pairs တွေရွေးနေပါတယ်...")
+    def get_safe_recommended_pairs(self):
+        """ADA, DOGE ပြဿနာရှိတာတွေကို ရှောင်ပြီး pairs recommend"""
+        print("🔧 Safe pairs selection...")
         
-        prompt = """
-        BINANCE FUTURES SCALPING PAIR RECOMMENDATIONS (EXCLUDE BTCUSDT, ETHUSDT, BNBUSDT):
-        Recommend 6-10 best altcoin pairs for scalping from Binance futures.
-        EXCLUDE BTC, ETH, BNB completely.
-        Focus on SOL, XRP, AVAX, MATIC, LINK, DOT, DOGE, etc.
+        # Reliable pairs ပဲသုံးမယ်
+        safe_pairs = self.reliable_pairs.copy()
         
-        RESPONSE (JSON only):
-        {
-            "recommended_pairs": ["SOLUSDT", "XRPUSDT", "AVAXUSDT", ...],
-            "reason": "These altcoin pairs have good liquidity and volatility for scalping"
-        }
-        """
-        
+        # AI recommendation ယူမယ်၊ ဒါပေမယ့် problematic pairs ဖြတ်မယ်
         try:
+            prompt = "Recommend 6 best Binance futures pairs EXCLUDING ADAUSDT, DOGEUSDT for scalping. Include SOL, AVAX, XRP, LINK, DOT, POL"
             headers = {"Authorization": f"Bearer {self.deepseek_key}", "Content-Type": "application/json"}
-            payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 500}
+            payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 300}
             
-            response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload, timeout=20)
+            response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload, timeout=15)
             
             if response.status_code == 200:
                 result = response.json()
                 content = result['choices'][0]['message']['content']
-                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                json_match = re.search(r'\[.*\]', content)
                 if json_match:
-                    recommendation = json.loads(json_match.group())
-                    pairs = recommendation.get("recommended_pairs", [])
-                    pairs = [p for p in pairs if p not in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]]
-                    print(f"✅ AI Recommended Pairs: {pairs}")
-                    return pairs[:8]  # Maximum 8 pairs
+                    ai_pairs = json.loads(json_match.group())
+                    # Problematic pairs filter
+                    safe_ai_pairs = [p for p in ai_pairs if p not in self.problematic_pairs]
+                    safe_pairs = safe_ai_pairs[:6]  # Take top 6
         except Exception as e:
-            print(f"❌ AI pair selection error: {e}")
-        
-        fallback_pairs = ["SOLUSDT", "XRPUSDT", "AVAXUSDT", "MATICUSDT", "LINKUSDT", "DOTUSDT", "DOGEUSDT"]
-        print(f"🔄 Using fallback pairs: {fallback_pairs}")
-        return fallback_pairs
+            print(f"⚠️ AI pair selection failed, using reliable pairs: {e}")
+            
+        print(f"✅ Safe Pairs Selected: {safe_pairs}")
+        return safe_pairs
+
+    def validate_ai_decision(self, decision, current_price):
+        """AI decision ကို validate လုပ်တဲ့ function အသစ်"""
+        try:
+            sl = decision["stop_loss"]
+            tp = decision["take_profit"]
+            pair = decision["pair"]
+            
+            # 1. Check if prices are different
+            if sl == tp:
+                print("❌ TP/SL are same - generating proper prices")
+                return self.generate_proper_prices(decision, current_price)
+            
+            # 2. Check minimum distance (0.5% minimum)
+            min_distance = current_price * 0.005
+            if abs(sl - current_price) < min_distance or abs(tp - current_price) < min_distance:
+                print("❌ TP/SL too close - regenerating")
+                return self.generate_proper_prices(decision, current_price)
+                
+            # 3. Check logical direction
+            if decision["direction"] == "LONG":
+                if tp <= current_price or sl >= current_price:
+                    print("❌ LONG direction wrong - regenerating")
+                    return self.generate_proper_prices(decision, current_price)
+            else:  # SHORT
+                if tp >= current_price or sl <= current_price:
+                    print("❌ SHORT direction wrong - regenerating")  
+                    return self.generate_proper_prices(decision, current_price)
+                    
+            print(f"✅ AI Decision Validated: SL=${sl}, TP=${tp}")
+            return decision  # All good
+            
+        except Exception as e:
+            print(f"❌ Validation failed: {e}")
+            return self.generate_proper_prices(decision, current_price)
     
+    def generate_proper_prices(self, decision, current_price):
+        """AI မှားရင် proper prices generate လုပ်မယ်"""
+        pair = decision["pair"]
+        direction = decision["direction"]
+        
+        if direction == "LONG":
+            stop_loss = current_price * (1 - self.scalp_stop_loss)
+            take_profit = current_price * (1 + self.scalp_take_profit)
+        else:
+            stop_loss = current_price * (1 + self.scalp_stop_loss) 
+            take_profit = current_price * (1 - self.scalp_take_profit)
+        
+        # Format with proper precision
+        stop_loss = self.format_price(pair, stop_loss)
+        take_profit = self.format_price(pair, take_profit)
+        
+        decision["stop_loss"] = stop_loss
+        decision["take_profit"] = take_profit
+        decision["reason"] = "Auto-corrected prices"
+        
+        print(f"🔧 Auto-corrected: SL=${stop_loss}, TP=${take_profit}")
+        return decision
+
     def get_detailed_market_data(self):
         market_data = {}
         
         if not self.available_pairs:
-            self.available_pairs = self.get_ai_recommended_pairs()
+            self.available_pairs = self.get_safe_recommended_pairs()
         
         for pair in self.available_pairs:
             try:
@@ -230,32 +283,39 @@ class MultiPairScalpingTrader:
                 continue
                 
         return market_data
-    
+
     def get_scalping_decision(self, market_data):
+        """Fixed version with validation"""
         pair = list(market_data.keys())[0]
         data = market_data[pair]
         price = data['price']
         
-        # AI ကို TP/SL သတ်မှတ်ခိုင်းပါ
+        # Better prompt with exact calculation instructions
         prompt = f"""
-        BINANCE FUTURES SCALPING DECISION for {pair}:
+        BINANCE FUTURES SCALPING for {pair}:
         Current Price: ${price}
         1H Change: {data['change_1h']:.2f}%
         Volume Ratio: {data['volume_ratio']:.2f}
         
-        Give scalping decision with EXACT take-profit and stop-loss prices.
-        Use 0.5-1% stop-loss and 0.8-1.5% take-profit for scalping.
+        CALCULATE EXACT PRICES:
+        - For LONG: SL = {price} * 0.994 = {price * 0.994:.6f}, TP = {price} * 1.010 = {price * 1.01:.6f}
+        - For SHORT: SL = {price} * 1.006 = {price * 1.006:.6f}, TP = {price} * 0.990 = {price * 0.99:.6f}
+        
+        MUST: 
+        - Prices DIFFERENT from current price
+        - Logical for direction (LONG: TP > Price > SL, SHORT: TP < Price < SL)
+        - Use proper precision
         
         RESPONSE (JSON only):
         {{
-            "action": "TRADE",
+            "action": "TRADE", 
             "pair": "{pair}",
             "direction": "LONG/SHORT",
             "entry_price": {price},
-            "stop_loss": 0.6100,  // EXACT PRICE
-            "take_profit": 0.6250, // EXACT PRICE  
-            "confidence": 85,
-            "reason": "Technical breakout with high volume"
+            "stop_loss": {price * 0.994:.6f},
+            "take_profit": {price * 1.01:.6f},
+            "confidence": 75,
+            "reason": "Valid setup"
         }}
         """
         
@@ -264,12 +324,12 @@ class MultiPairScalpingTrader:
             payload = {
                 "model": "deepseek-chat", 
                 "messages": [{"role": "user", "content": prompt}], 
-                "temperature": 0.3,
+                "temperature": 0.2,  # Lower temperature for consistency
                 "max_tokens": 500
             }
             
             response = requests.post("https://api.deepseek.com/v1/chat/completions", 
-                                   headers=headers, json=payload, timeout=20)
+                                   headers=headers, json=payload, timeout=15)
             
             if response.status_code == 200:
                 result = response.json()
@@ -277,15 +337,30 @@ class MultiPairScalpingTrader:
                 json_match = re.search(r'\{.*\}', content, re.DOTALL)
                 if json_match:
                     decision = json.loads(json_match.group())
-                    print(f"🤖 AI Decision: {decision}")
-                    return decision
+                    print(f"🤖 AI Raw Decision: {decision}")
+                    
+                    # ✅ VALIDATE THE DECISION
+                    validated_decision = self.validate_ai_decision(decision, price)
+                    return validated_decision
+                    
         except Exception as e:
             print(f"❌ AI decision error: {e}")
         
-        # Fallback
-        return {"action": "WAIT", "reason": "AI decision failed"}
+        # Fallback with auto-generated prices
+        fallback_decision = {
+            "action": "TRADE",
+            "pair": pair,
+            "direction": "LONG" if data['change_1h'] > 0 else "SHORT",
+            "entry_price": price,
+            "stop_loss": price * 0.994,
+            "take_profit": price * 1.01, 
+            "confidence": 65,
+            "reason": "Fallback decision"
+        }
+        return self.validate_ai_decision(fallback_decision, price)
 
     def execute_scalping_trade(self, decision):
+        """Fixed execution with better error handling"""
         try:
             pair = decision["pair"]
             direction = decision["direction"]
@@ -319,7 +394,7 @@ class MultiPairScalpingTrader:
                 print(f"❌ Entry order failed: {e}")
                 return False
             
-            # ✅ AI ကပေးတဲ့ TP/SL ကိုသုံးပါ
+            # ✅ AI ကပေးတဲ့ TP/SL ကိုသုံးပါ (already validated)
             stop_loss = decision["stop_loss"]
             take_profit = decision["take_profit"]
             
@@ -496,7 +571,7 @@ class MultiPairScalpingTrader:
             print(f"❌ Scalping cycle error: {e}")
 
     def start_auto_trading(self):
-        print("🚀 STARTING UNIVERSAL SCALPING BOT!")
+        print("🚀 STARTING FIXED SCALPING BOT!")
         
         cycle_count = 0
         
