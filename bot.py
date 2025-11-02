@@ -308,61 +308,158 @@ class MultiPairScalpingTrader:
             
             print(f"🎯 EXECUTING TRADE: {pair} {direction}")
             
+            # Trade limit checks
             if len(self.active_trades) >= self.max_concurrent_trades:
+                print(f"⚠️ Maximum trades reached, skipping {pair}")
                 return False
             
             if pair in self.active_trades:
+                print(f"⚠️ Already trading {pair}, skipping")
                 return False
             
+            # Get current price and quantity
             ticker = self.binance.futures_symbol_ticker(symbol=pair)
             current_price = float(ticker['price'])
+            print(f"💰 Current {pair} price: ${current_price}")
             
             quantity = self.get_quantity(pair, current_price)
             if quantity is None:
+                print(f"❌ Quantity calculation failed for {pair}")
                 return False
+            
+            print(f"⚡ Quantity: {quantity} {pair}")
             
             entry_price = current_price
             
-            if direction == "LONG":
-                order = self.binance.futures_create_order(symbol=pair, side='BUY', type='MARKET', quantity=quantity)
-                print(f"✅ LONG ENTRY: {quantity} {pair} @ ${entry_price}")
-            else:
-                order = self.binance.futures_create_order(symbol=pair, side='SELL', type='MARKET', quantity=quantity)
-                print(f"✅ SHORT ENTRY: {quantity} {pair} @ ${entry_price}")
-            
-            if direction == "LONG":
-                stop_loss = entry_price * (1 - self.scalp_stop_loss)
-                take_profit = entry_price * (1 + self.scalp_take_profit)
-            else:
-                stop_loss = entry_price * (1 + self.scalp_stop_loss)
-                take_profit = entry_price * (1 - self.scalp_take_profit)
-            
-            stop_loss = self.format_price(pair, stop_loss)
-            take_profit = self.format_price(pair, take_profit)
-            
+            # MARKET ENTRY
             try:
                 if direction == "LONG":
-                    self.binance.futures_create_order(symbol=pair, side='SELL', type='STOP_MARKET', quantity=quantity, stopPrice=stop_loss, timeInForce='GTC', reduceOnly=True)
-                    self.binance.futures_create_order(symbol=pair, side='SELL', type='LIMIT', quantity=quantity, price=take_profit, timeInForce='GTC', reduceOnly=True)
+                    order = self.binance.futures_create_order(
+                        symbol=pair, side='BUY', type='MARKET', quantity=quantity
+                    )
+                    print(f"✅ LONG ENTRY: {quantity} {pair} @ ${entry_price}")
                 else:
-                    self.binance.futures_create_order(symbol=pair, side='BUY', type='STOP_MARKET', quantity=quantity, stopPrice=stop_loss, timeInForce='GTC', reduceOnly=True)
-                    self.binance.futures_create_order(symbol=pair, side='BUY', type='LIMIT', quantity=quantity, price=take_profit, timeInForce='GTC', reduceOnly=True)
+                    order = self.binance.futures_create_order(
+                        symbol=pair, side='SELL', type='MARKET', quantity=quantity
+                    )
+                    print(f"✅ SHORT ENTRY: {quantity} {pair} @ ${entry_price}")
             except Exception as e:
-                print(f"❌ TP/SL order failed: {e}")
+                print(f"❌ Entry order failed: {e}")
                 return False
             
+            # UNIVERSAL TP/SL CALCULATION FOR ALL PAIRS
+            if direction == "LONG":
+                stop_loss_price = entry_price * (1 - self.scalp_stop_loss)
+                take_profit_price = entry_price * (1 + self.scalp_take_profit)
+            else:
+                stop_loss_price = entry_price * (1 + self.scalp_stop_loss)
+                take_profit_price = entry_price * (1 - self.scalp_take_profit)
+            
+            # Format prices according to pair precision
+            stop_loss_price = self.format_price(pair, stop_loss_price)
+            take_profit_price = self.format_price(pair, take_profit_price)
+            
+            # CRITICAL: VALIDATE PRICES FOR ALL PAIRS
+            print(f"🔧 Validating prices for {pair}...")
+            
+            if direction == "LONG":
+                if take_profit_price <= entry_price:
+                    print(f"⚠️ TP adjustment needed: TP${take_profit_price} <= Entry${entry_price}")
+                    take_profit_price = self.format_price(pair, entry_price * 1.01)
+                if stop_loss_price >= entry_price:
+                    print(f"⚠️ SL adjustment needed: SL${stop_loss_price} >= Entry${entry_price}")  
+                    stop_loss_price = self.format_price(pair, entry_price * 0.99)
+            else:
+                if take_profit_price >= entry_price:
+                    print(f"⚠️ TP adjustment needed: TP${take_profit_price} >= Entry${entry_price}")
+                    take_profit_price = self.format_price(pair, entry_price * 0.99)
+                if stop_loss_price <= entry_price:
+                    print(f"⚠️ SL adjustment needed: SL${stop_loss_price} <= Entry${entry_price}")
+                    stop_loss_price = self.format_price(pair, entry_price * 1.01)
+            
+            print(f"🎯 {direction}: Entry=${entry_price}, TP=${take_profit_price}, SL=${stop_loss_price}")
+            
+            # UNIVERSAL TP/SL PLACEMENT
+            try:
+                if direction == "LONG":
+                    # STOP LOSS
+                    self.binance.futures_create_order(
+                        symbol=pair,
+                        side='SELL',
+                        type='STOP_MARKET',
+                        quantity=quantity,
+                        stopPrice=stop_loss_price,
+                        timeInForce='GTC',
+                        reduceOnly=True
+                    )
+                    # TAKE PROFIT
+                    self.binance.futures_create_order(
+                        symbol=pair,
+                        side='SELL', 
+                        type='LIMIT',
+                        quantity=quantity,
+                        price=take_profit_price,
+                        timeInForce='GTC',
+                        reduceOnly=True
+                    )
+                else:
+                    # STOP LOSS
+                    self.binance.futures_create_order(
+                        symbol=pair,
+                        side='BUY',
+                        type='STOP_MARKET',
+                        quantity=quantity,
+                        stopPrice=stop_loss_price, 
+                        timeInForce='GTC',
+                        reduceOnly=True
+                    )
+                    # TAKE PROFIT
+                    self.binance.futures_create_order(
+                        symbol=pair,
+                        side='BUY',
+                        type='LIMIT',
+                        quantity=quantity,
+                        price=take_profit_price,
+                        timeInForce='GTC',
+                        reduceOnly=True
+                    )
+                    
+                print(f"✅ TP/SL ORDERS PLACED SUCCESSFULLY")
+                
+            except Exception as e:
+                print(f"❌ TP/SL order failed: {e}")
+                
+                # EMERGENCY: Close position if TP/SL fails
+                try:
+                    print(f"🔄 Closing position due to TP/SL failure...")
+                    if direction == "LONG":
+                        self.binance.futures_create_order(
+                            symbol=pair, side='SELL', type='MARKET', quantity=quantity, reduceOnly=True
+                        )
+                    else:
+                        self.binance.futures_create_order(
+                            symbol=pair, side='BUY', type='MARKET', quantity=quantity, reduceOnly=True  
+                        )
+                    print(f"⚠️ Position closed due to TP/SL error")
+                except Exception as close_error:
+                    print(f"❌ Failed to close position: {close_error}")
+                
+                return False
+            
+            # Store trade info
             self.active_trades[pair] = {
                 "pair": pair,
                 "direction": direction,
                 "entry_price": entry_price,
                 "quantity": quantity,
-                "stop_loss": stop_loss,
-                "take_profit": take_profit,
+                "stop_loss": stop_loss_price,
+                "take_profit": take_profit_price,
                 "entry_time": time.time(),
                 "confidence": decision["confidence"]
             }
             
-            print(f"🚀 TRADE ACTIVATED: {pair} {direction}")
+            print(f"🚀 TRADE SUCCESSFULLY ACTIVATED: {pair} {direction}")
+            print(f"📊 Active Trades: {list(self.active_trades.keys())}")
             return True
             
         except Exception as e:
@@ -413,6 +510,7 @@ class MultiPairScalpingTrader:
             print(f"   Active Trades: {len(self.active_trades)}/{self.max_concurrent_trades}")
             
             if len(self.active_trades) >= self.max_concurrent_trades:
+                print(f"⏸️ Maximum trades reached, skipping analysis")
                 self.check_scalping_trades()
                 return
             
