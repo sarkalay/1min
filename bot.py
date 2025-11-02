@@ -781,7 +781,7 @@ class MultiPairScalpingTrader:
                 cycle_count += 1
                 print(f"\n{'='*60}")
                 print(f"🔄 CYCLE {cycle_count} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
-                print(f"{='*60}")
+                print(f"{'='*60}")
                 
                 self.run_scalping_cycle()
                 
