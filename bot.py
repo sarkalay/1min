@@ -306,7 +306,7 @@ class AIScalpingTrader:
                     print(f"✅ LONG ENTRY: {quantity} {pair} @ ${current_price}")
                 else:
                     order = self.binance.futures_create_order(
-                        symbol=pair, side='SEL', type='MARKET', quantity=quantity
+                        symbol=pair, side='SELL', type='MARKET', quantity=quantity
                     )
                     print(f"✅ SHORT ENTRY: {quantity} {pair} @ ${current_price}")
             except Exception as e:
