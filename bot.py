@@ -25,7 +25,7 @@ class MultiPairScalpingTrader:
         self.scalp_stop_loss = 0.005    # 0.5% for scalping
         
         # Multi-pair parameters
-        self.max_concurrent_trades = 3
+        self.max_concurrent_trades = 2
         self.available_pairs = []
         self.active_trades = {}
         self.blacklisted_pairs = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
