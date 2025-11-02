@@ -175,16 +175,6 @@ class MultiPairScalpingTrader:
             print(f"❌ Quantity calculation failed: {e}")
             return None
     
-    def get_minimum_quantity(self, pair):
-        """Get minimum quantity for a pair based on Binance requirements"""
-        min_quantities = {
-            'ADAUSDT': 1, 'XRPUSDT': 1, 'DOGEUSDT': 1, 'TRXUSDT': 1,
-            'ETHUSDT': 0.001, 'BNBUSDT': 0.01, 'SOLUSDT': 0.01,
-            'AVAXUSDT': 0.1, 'MATICUSDT': 1, 'DOTUSDT': 0.1,
-            'LINKUSDT': 0.1, 'LTCUSDT': 0.01, 'ATOMUSDT': 0.1
-        }
-        return min_quantities.get(pair, 0.01)
-    
     def format_price(self, pair, price):
         """Format price according to symbol precision"""
         precision = self.price_precision.get(pair, 4)
@@ -313,94 +303,6 @@ class MultiPairScalpingTrader:
         print(f"🎯 Final Validated Pairs: {valid_pairs}")
         return valid_pairs[:10]  # Maximum 10 pairs for selection pool
     
-    def rotate_pairs_based_on_performance(self):
-        """စျေးကွက်အခြေအနေအရ pairs တွေကိုလည်ပတ်ရွေးချယ်ခြင်း"""
-        print("🔄 Rotating pairs based on current market conditions...")
-        
-        market_condition_prompt = """
-        Analyze current crypto market and recommend best scalping pairs for NEXT 6 HOURS.
-        EXCLUDE BTCUSDT completely - focus only on altcoins.
-        
-        Consider:
-        - Altcoin market trend vs BTC
-        - Sector rotation (AI, DeFi, Gaming, etc.)
-        - Volatility opportunities in alts
-        - News and events affecting altcoins
-        - Technical setups in altcoins
-        
-        Focus on altcoin pairs with imminent breakout/breakdown potential for 0.5-1% scalps.
-        
-        RESPONSE (JSON):
-        {
-            "market_condition": "altcoin_season/consolidating/volatile",
-            "recommended_pairs": ["ETHUSDT", "BNBUSDT", "SOLUSDT", ...],
-            "timeframe": "next_6_hours",
-            "strategy": "Focus on AI sector altcoins",
-            "risk_level": "medium/high",
-            "key_opportunities": "ETH breaking resistance, SOL momentum play"
-        }
-        """
-        
-        try:
-            headers = {
-                "Authorization": f"Bearer {self.deepseek_key}",
-                "Content-Type": "application/json"
-            }
-            
-            payload = {
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": market_condition_prompt}],
-                "temperature": 0.4,
-                "max_tokens": 600
-            }
-            
-            response = requests.post(
-                "https://api.deepseek.com/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=25
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                content = result['choices'][0]['message']['content']
-                
-                json_match = re.search(r'\{.*\}', content, re.DOTALL)
-                if json_match:
-                    market_analysis = json.loads(json_match.group())
-                    new_pairs = market_analysis.get("recommended_pairs", [])
-                    
-                    # Remove BTC if included
-                    new_pairs = [p for p in new_pairs if p != "BTCUSDT"]
-                    
-                    if new_pairs:
-                        valid_pairs = self.validate_ai_pairs(new_pairs)
-                        if valid_pairs:
-                            old_pairs = self.available_pairs.copy()
-                            self.available_pairs = valid_pairs
-                            
-                            # Setup leverage for new pairs
-                            for pair in valid_pairs:
-                                try:
-                                    self.binance.futures_change_leverage(
-                                        symbol=pair,
-                                        leverage=self.leverage
-                                    )
-                                except Exception as e:
-                                    print(f"⚠️ Leverage setup failed for {pair}: {e}")
-                            
-                            print(f"🔄 Successfully rotated pairs!")
-                            print(f"   Old: {old_pairs}")
-                            print(f"   New: {valid_pairs}")
-                            print(f"📈 Market Condition: {market_analysis.get('market_condition', 'unknown')}")
-                            print(f"🎯 Strategy: {market_analysis.get('strategy', '')}")
-                            return True
-        
-        except Exception as e:
-            print(f"❌ Pair rotation error: {e}")
-        
-        return False
-    
     def auto_rotate_pairs(self):
         """Auto rotate pairs based on time interval"""
         current_time = time.time()
@@ -410,14 +312,8 @@ class MultiPairScalpingTrader:
             not self.available_pairs):
             
             print(f"🕒 Time for pair rotation...")
-            success = self.rotate_pairs_based_on_performance()
-            
-            if success:
-                self.last_rotation_time = current_time
-            else:
-                # If rotation fails, get basic AI recommendation
-                self.available_pairs = self.get_ai_recommended_pairs()
-                self.last_rotation_time = current_time
+            self.available_pairs = self.get_ai_recommended_pairs()
+            self.last_rotation_time = current_time
     
     def get_detailed_market_data(self):
         """Get market data for all active pairs"""
@@ -487,46 +383,38 @@ class MultiPairScalpingTrader:
         return market_data
     
     def get_scalping_decision(self, market_data):
-        """SELECTIVE AI VERSION - REALISTIC TRADE/SKIP DECISIONS"""
+        """BALANCED AI VERSION - REALISTIC DECISIONS"""
         pair = list(market_data.keys())[0]
         data = market_data[pair]
         price = data['price']
+        
+        # Check market conditions first
+        volume_ratio = data.get('volume_ratio', 1)
+        volatility = data.get('volatility', 0)
+        change_1h = data.get('change_1h', 0)
+        
+        # Auto-skip poor conditions
+        if volume_ratio < 0.8 or volatility < 0.2:
+            return {
+                "action": "SKIP",
+                "confidence": 30,
+                "reason": f"Poor conditions: volume {volume_ratio:.2f}x, volatility {volatility:.2f}%"
+            }
         
         prompt = f"""
         REALISTIC SCALPING ANALYSIS FOR {pair}:
 
         CURRENT MARKET DATA:
         - Price: ${price}
-        - 1H Change: {data.get('change_1h', 0):.2f}%
-        - Volume Ratio: {data.get('volume_ratio', 1):.2f}x
-        - Volatility: {data.get('volatility', 0):.2f}%
+        - 1H Change: {change_1h:.2f}%
+        - Volume Ratio: {volume_ratio:.2f}x
+        - Volatility: {volatility:.2f}%
         - 1H Range: ${data.get('low_1h', price):.2f} - ${data.get('high_1h', price):.2f}
 
-        🔍 **BE REALISTIC - NOT EVERY SETUP IS GOOD:**
-        
-        **GOOD SCALPING SETUPS (TRADE):**
-        - Clear support/resistance bounce
-        - Strong volume confirmation (ratio > 1.2x)
-        - Volatility > 0.3% for movement potential
-        - Clear risk/reward (at least 1.5:1)
-        - Price near key levels with momentum
-
-        **POOR SETUPS (SKIP):**
-        - Low volume (ratio < 0.8x)
-        - Very low volatility (< 0.2%)
-        - No clear direction or choppy price action
-        - Poor risk/reward ratio
-        - Price in middle of range with no edge
-
-        ⚖️ **IMPORTANT: BE SELECTIVE**
-        - Only recommend TRADE for clear, high-probability setups
-        - Recommend SKIP for mediocre or unclear setups
-        - Realistic confidence levels (not everything is 65%+)
-
-        📊 **CURRENT ANALYSIS:**
-        - Volume: {'GOOD' if data.get('volume_ratio', 1) > 1.2 else 'LOW'} ({data.get('volume_ratio', 1):.2f}x)
-        - Volatility: {'ADEQUATE' if data.get('volatility', 0) > 0.3 else 'LOW'} ({data.get('volatility', 0):.2f}%)
-        - Momentum: {'CLEAR' if abs(data.get('change_1h', 0)) > 0.3 else 'WEAK'} ({data.get('change_1h', 0):.2f}%)
+        BE HONEST AND SELECTIVE:
+        - Only trade if clear setup exists
+        - Skip if conditions are mediocre
+        - Consider both LONG and SHORT opportunities equally
 
         RESPONSE (JSON only):
         {{
@@ -537,7 +425,7 @@ class MultiPairScalpingTrader:
             "stop_loss": number,
             "take_profit": number,
             "confidence": 0-100,
-            "reason": "Honest assessment - explain WHY this is tradeable or why it should be skipped",
+            "reason": "Brief explanation of the setup",
             "urgency": "high/medium/low"
         }}
         """
@@ -551,15 +439,15 @@ class MultiPairScalpingTrader:
             payload = {
                 "model": "deepseek-chat",
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,  # Lower temperature for more realistic responses
-                "max_tokens": 500
+                "temperature": 0.4,
+                "max_tokens": 400
             }
             
             response = requests.post(
                 "https://api.deepseek.com/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=15
+                timeout=10
             )
             
             if response.status_code == 200:
@@ -580,42 +468,30 @@ class MultiPairScalpingTrader:
         except Exception as e:
             print(f"❌ AI API Error for {pair}: {e}")
         
-        # More realistic fallback
-        return self.get_realistic_fallback(market_data)
-    
-    def get_realistic_fallback(self, market_data):
-        """More selective fallback"""
-        pair = list(market_data.keys())[0]
-        data = market_data[pair]
-        
-        volume_ratio = data.get('volume_ratio', 1)
-        volatility = data.get('volatility', 0)
-        change_1h = data.get('change_1h', 0)
-        
-        # Only trade if conditions are good
-        if volume_ratio > 1.2 and volatility > 0.3 and abs(change_1h) > 0.2:
+        # Fallback based on market conditions
+        if volume_ratio > 1.2 and volatility > 0.3:
             import random
             direction = "LONG" if random.random() < 0.5 else "SHORT"
             return {
                 "action": "TRADE",
                 "pair": pair,
                 "direction": direction,
-                "entry_price": data['price'],
-                "stop_loss": data['price'] * (0.995 if direction == "LONG" else 1.005),
-                "take_profit": data['price'] * (1.008 if direction == "LONG" else 0.992),
+                "entry_price": price,
+                "stop_loss": price * (0.995 if direction == "LONG" else 1.005),
+                "take_profit": price * (1.008 if direction == "LONG" else 0.992),
                 "confidence": 65,
-                "reason": f"Fallback: Good volume ({volume_ratio:.2f}x), volatility ({volatility:.2f}%)",
+                "reason": f"Fallback: Good volume & volatility",
                 "urgency": "medium"
             }
         else:
             return {
-                "action": "SKIP",
+                "action": "SKIP", 
                 "confidence": 40,
-                "reason": f"Fallback: Poor conditions - volume {volume_ratio:.2f}x, volatility {volatility:.2f}%"
+                "reason": f"Fallback: Mediocre conditions"
             }
 
     def execute_scalping_trade(self, decision):
-        """FIXED VERSION - PROPER ENTRY PRICE HANDLING"""
+        """STABLE VERSION - PROPER ORDER MANAGEMENT"""
         try:
             pair = decision["pair"]
             direction = decision["direction"]
@@ -632,7 +508,7 @@ class MultiPairScalpingTrader:
                 print(f"⚠️ Already have active trade for {pair}, skipping")
                 return False
             
-            # Get current price FIRST
+            # Get current price
             ticker = self.binance.futures_symbol_ticker(symbol=pair)
             current_price = float(ticker['price'])
             print(f"💰 Current {pair} price: ${current_price}")
@@ -645,9 +521,8 @@ class MultiPairScalpingTrader:
             
             print(f"⚡ QUANTITY: {quantity} {pair}")
             
-            # USE CURRENT PRICE as entry price (SAFER)
+            # Use current price as entry
             entry_price = current_price
-            print(f"🎯 Using current price as entry: ${entry_price}")
             
             # MARKET ENTRY
             try:
@@ -658,70 +533,35 @@ class MultiPairScalpingTrader:
                         type='MARKET',
                         quantity=quantity
                     )
-                    print(f"✅ LONG ENTRY ORDER PLACED: {quantity} {pair}")
-                    
-                    # Try to get actual entry price, but use current_price as fallback
-                    try:
-                        executed_price = float(order.get('avgPrice', 0))
-                        if executed_price > 0.1:  # Valid price check
-                            entry_price = executed_price
-                            print(f"📊 Actual Entry Price: ${entry_price}")
-                        else:
-                            print(f"⚠️ Using current price as entry: ${entry_price}")
-                    except:
-                        print(f"⚠️ Using current price as entry: ${entry_price}")
-                        
+                    print(f"✅ LONG ENTRY: {quantity} {pair}")
                 else:  # SHORT
                     order = self.binance.futures_create_order(
                         symbol=pair,
-                        side='SELL',
+                        side='SELL', 
                         type='MARKET',
                         quantity=quantity
                     )
-                    print(f"✅ SHORT ENTRY ORDER PLACED: {quantity} {pair}")
+                    print(f"✅ SHORT ENTRY: {quantity} {pair}")
                     
-                    # Try to get actual entry price
-                    try:
-                        executed_price = float(order.get('avgPrice', 0))
-                        if executed_price > 0.1:
-                            entry_price = executed_price
-                            print(f"📊 Actual Entry Price: ${entry_price}")
-                        else:
-                            print(f"⚠️ Using current price as entry: ${entry_price}")
-                    except:
-                        print(f"⚠️ Using current price as entry: ${entry_price}")
-                        
             except Exception as order_error:
                 print(f"❌ Entry order failed: {order_error}")
                 return False
             
-            # VALIDATE ENTRY PRICE
-            if entry_price <= 0.1:
-                print(f"❌ INVALID ENTRY PRICE: ${entry_price}")
-                return False
-            
-            # Calculate TP/SL with VALIDATED entry price
+            # Calculate TP/SL
             if direction == "LONG":
                 stop_loss = entry_price * (1 - self.scalp_stop_loss)
                 take_profit = entry_price * (1 + self.scalp_take_profit)
-                print(f"🎯 LONG: Entry=${entry_price}, TP=${take_profit:.4f}, SL=${stop_loss:.4f}")
             else:  # SHORT
                 stop_loss = entry_price * (1 + self.scalp_stop_loss)
                 take_profit = entry_price * (1 - self.scalp_take_profit)
-                print(f"🎯 SHORT: Entry=${entry_price}, TP=${take_profit:.4f}, SL=${stop_loss:.4f}")
             
             # Format prices
             stop_loss = self.format_price(pair, stop_loss)
             take_profit = self.format_price(pair, take_profit)
             
-            # VALIDATE TP/SL PRICES
-            if stop_loss <= 0.01 or take_profit <= 0.01:
-                print(f"❌ INVALID TP/SL: TP=${take_profit}, SL=${stop_loss}")
-                return False
+            print(f"🎯 {direction}: Entry=${entry_price}, TP=${take_profit}, SL=${stop_loss}")
             
-            print(f"✅ VALIDATED PRICES: TP=${take_profit}, SL=${stop_loss}")
-            
-            # Place TP/SL orders
+            # Place TP/SL orders with proper error handling
             try:
                 if direction == "LONG":
                     # STOP LOSS
@@ -734,13 +574,13 @@ class MultiPairScalpingTrader:
                         timeInForce='GTC',
                         reduceOnly=True
                     )
-                    # TAKE PROFIT
+                    # TAKE PROFIT  
                     self.binance.futures_create_order(
                         symbol=pair,
                         side='SELL',
-                        type='LIMIT',
+                        type='TAKE_PROFIT_MARKET',
                         quantity=quantity,
-                        price=take_profit,
+                        stopPrice=take_profit,
                         timeInForce='GTC',
                         reduceOnly=True
                     )
@@ -759,38 +599,17 @@ class MultiPairScalpingTrader:
                     self.binance.futures_create_order(
                         symbol=pair,
                         side='BUY',
-                        type='LIMIT',
+                        type='TAKE_PROFIT_MARKET',
                         quantity=quantity,
-                        price=take_profit,
+                        stopPrice=take_profit,
                         timeInForce='GTC',
                         reduceOnly=True
                     )
                     
-                print(f"✅ TP/SL ORDERS PLACED SUCCESSFULLY")
+                print(f"✅ TP/SL ORDERS PLACED")
                 
             except Exception as sl_tp_error:
                 print(f"❌ TP/SL order failed: {sl_tp_error}")
-                # Try to close position
-                try:
-                    if direction == "LONG":
-                        self.binance.futures_create_order(
-                            symbol=pair,
-                            side='SELL',
-                            type='MARKET',
-                            quantity=quantity,
-                            reduceOnly=True
-                        )
-                    else:
-                        self.binance.futures_create_order(
-                            symbol=pair,
-                            side='BUY',
-                            type='MARKET',
-                            quantity=quantity,
-                            reduceOnly=True
-                        )
-                    print(f"⚠️ Position closed due to TP/SL error")
-                except:
-                    print(f"❌ Failed to close position")
                 return False
             
             # Store trade info
@@ -805,18 +624,32 @@ class MultiPairScalpingTrader:
                 "confidence": decision["confidence"]
             }
             
-            print(f"🚀 TRADE SUCCESSFULLY ACTIVATED: {pair} {direction}")
+            print(f"🚀 TRADE ACTIVATED: {pair} {direction}")
             print(f"📊 Active Trades: {list(self.active_trades.keys())}")
+            
+            # Verify position was created
+            time.sleep(2)
+            try:
+                positions = self.binance.futures_position_information(symbol=pair)
+                for pos in positions:
+                    if pos['symbol'] == pair:
+                        position_amt = float(pos['positionAmt'])
+                        if position_amt != 0:
+                            print(f"✅ POSITION CONFIRMED: {position_amt} contracts")
+                        else:
+                            print(f"❌ POSITION NOT FOUND")
+                        break
+            except Exception as e:
+                print(f"⚠️ Position verification failed: {e}")
+            
             return True
             
         except Exception as e:
             print(f"❌ Trade execution failed: {e}")
-            import traceback
-            traceback.print_exc()
             return False
 
     def check_scalping_trades(self):
-        """Check all active trades status"""
+        """PROPER POSITION CHECKING"""
         if not self.active_trades:
             return
         
@@ -824,11 +657,21 @@ class MultiPairScalpingTrader:
         
         for pair, trade_info in self.active_trades.items():
             try:
-                # Check if position still exists
+                # Get position information
                 positions = self.binance.futures_position_information(symbol=pair)
-                position = next((p for p in positions if float(p['positionAmt']) != 0), None)
                 
-                if not position:
+                position_found = False
+                for pos in positions:
+                    if pos['symbol'] == pair:
+                        position_amt = float(pos['positionAmt'])
+                        unrealized_pnl = float(pos['unRealizedProfit'])
+                        
+                        if position_amt != 0:
+                            position_found = True
+                            print(f"📊 {pair} active: {position_amt} contracts, PnL: ${unrealized_pnl:.2f}")
+                            break
+                
+                if not position_found:
                     # Trade completed
                     exit_time = time.time()
                     trade_duration = (exit_time - trade_info["entry_time"]) / 60
@@ -851,7 +694,7 @@ class MultiPairScalpingTrader:
             print(f"📊 Remaining Active Trades: {list(self.active_trades.keys())}")
 
     def run_scalping_cycle(self):
-        """FIXED scalping cycle with PROPER TRADE LIMIT ENFORCEMENT"""
+        """STABLE SCALPING CYCLE"""
         try:
             # Auto rotate pairs if needed
             self.auto_rotate_pairs()
@@ -872,7 +715,7 @@ class MultiPairScalpingTrader:
             
             # Check if we already have maximum trades
             if len(self.active_trades) >= self.max_concurrent_trades:
-                print(f"⏸️  Maximum trades reached ({self.max_concurrent_trades}), skipping analysis")
+                print(f"⏸️  Maximum trades reached, skipping analysis")
                 self.check_scalping_trades()
                 return
             
@@ -880,7 +723,6 @@ class MultiPairScalpingTrader:
             trade_opportunities = []
             
             for pair in self.available_pairs:
-                # Skip if already have max trades
                 if len(self.active_trades) >= self.max_concurrent_trades:
                     break
                     
@@ -896,27 +738,25 @@ class MultiPairScalpingTrader:
                         trade_opportunities.append((decision, decision["confidence"]))
                         print(f"✅ QUALIFIED: {pair} - {decision['confidence']}% confidence")
             
-            # Sort by confidence and execute TOP N only
+            # Sort by confidence and execute
             trade_opportunities.sort(key=lambda x: x[1], reverse=True)
             
-            # TAKE ONLY THE NUMBER WE NEED (max - current)
+            # Take only available slots
             available_slots = self.max_concurrent_trades - len(self.active_trades)
             trade_opportunities = trade_opportunities[:available_slots]
             
-            print(f"🎯 Trade Opportunities: {len(trade_opportunities)} (Available slots: {available_slots})")
+            print(f"🎯 Trade Opportunities: {len(trade_opportunities)}")
             
             executed_count = 0
             for decision, confidence in trade_opportunities:
-                # Double check we still have available slots
                 if len(self.active_trades) >= self.max_concurrent_trades:
-                    print(f"🛑 Trade limit reached during execution")
                     break
                     
-                print(f"🚀 ATTEMPTING EXECUTION: {decision['pair']} {decision['direction']}")
+                print(f"🚀 EXECUTING: {decision['pair']} {decision['direction']}")
                 success = self.execute_scalping_trade(decision)
                 if success:
                     executed_count += 1
-                    time.sleep(2)  # Small delay between executions
+                    time.sleep(3)  # Wait between executions
             
             print(f"📈 Executed {executed_count} trades this cycle")
             
@@ -925,12 +765,10 @@ class MultiPairScalpingTrader:
             
         except Exception as e:
             print(f"❌ Scalping cycle error: {e}")
-            import traceback
-            traceback.print_exc()
 
     def start_auto_trading(self):
         """Main auto trading loop"""
-        print("🚀 STARTING MULTI-PAIR SCALPING BOT (NO BTC)!")
+        print("🚀 STARTING MULTI-PAIR SCALPING BOT!")
         
         # Initial pair selection
         self.available_pairs = self.get_ai_recommended_pairs()
@@ -943,7 +781,7 @@ class MultiPairScalpingTrader:
                 cycle_count += 1
                 print(f"\n{'='*60}")
                 print(f"🔄 CYCLE {cycle_count} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
-                print(f"{'='*60}")
+                print(f"{='*60}")
                 
                 self.run_scalping_cycle()
                 
