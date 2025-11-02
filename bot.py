@@ -7,10 +7,19 @@ import numpy as np
 from binance.client import Client
 from dotenv import load_dotenv
 
+# Install colorama first: pip install colorama
+try:
+    from colorama import init, Fore, Back, Style
+    init(autoreset=True)
+    COLORAMA_AVAILABLE = True
+except ImportError:
+    COLORAMA_AVAILABLE = False
+    print("⚠️  Colorama not installed. Run: pip install colorama")
+
 # Load environment variables
 load_dotenv()
 
-class ExistingPositionTracker:
+class ColorfulPositionTracker:
     def __init__(self):
         # Load config from .env file
         self.binance_api_key = os.getenv('BINANCE_API_KEY')
@@ -36,23 +45,30 @@ class ExistingPositionTracker:
         # Initialize Binance client
         self.binance = Client(self.binance_api_key, self.binance_secret)
         
-        print("🤖 EXISTING POSITION TRACKER ACTIVATED!")
-        print(f"💵 Trade Size: ${self.trade_size_usd}")
-        print(f"📈 Max Trades: {self.max_concurrent_trades}")
+        self.print_color(f"🤖 EXISTING POSITION TRACKER ACTIVATED!", Fore.CYAN)
+        self.print_color(f"💵 Trade Size: ${self.trade_size_usd}", Fore.GREEN)
+        self.print_color(f"📈 Max Trades: {self.max_concurrent_trades}", Fore.YELLOW)
         
         self.validate_config()
         self.setup_futures()
         self.load_symbol_precision()
     
+    def print_color(self, text, color=Fore.WHITE, style=Style.NORMAL):
+        """Colorful print function"""
+        if COLORAMA_AVAILABLE:
+            print(f"{style}{color}{text}")
+        else:
+            print(text)
+    
     def validate_config(self):
         if not all([self.binance_api_key, self.binance_secret, self.deepseek_key]):
-            print("❌ Missing API keys!")
+            self.print_color("❌ Missing API keys!", Fore.RED)
             return False
         try:
             self.binance.futures_exchange_info()
-            print("✅ Binance connection successful!")
+            self.print_color("✅ Binance connection successful!", Fore.GREEN)
         except Exception as e:
-            print(f"❌ Binance connection failed: {e}")
+            self.print_color(f"❌ Binance connection failed: {e}", Fore.RED)
             return False
         return True
 
@@ -61,12 +77,12 @@ class ExistingPositionTracker:
             for pair in self.available_pairs:
                 try:
                     self.binance.futures_change_leverage(symbol=pair, leverage=self.leverage)
-                    print(f"✅ Leverage set for {pair}")
+                    self.print_color(f"✅ Leverage set for {pair}", Fore.GREEN)
                 except Exception as e:
-                    print(f"⚠️ Leverage setup failed for {pair}: {e}")
-            print("✅ Futures setup completed!")
+                    self.print_color(f"⚠️ Leverage setup failed for {pair}: {e}", Fore.YELLOW)
+            self.print_color("✅ Futures setup completed!", Fore.GREEN)
         except Exception as e:
-            print(f"❌ Futures setup failed: {e}")
+            self.print_color(f"❌ Futures setup failed: {e}", Fore.RED)
     
     def load_symbol_precision(self):
         try:
@@ -88,42 +104,31 @@ class ExistingPositionTracker:
                         else:
                             price_precision = len(tick_size.split('.')[1].rstrip('0'))
                         self.price_precision[pair] = price_precision
-            print("✅ Symbol precision loaded")
+            self.print_color("✅ Symbol precision loaded", Fore.GREEN)
         except Exception as e:
-            print(f"❌ Error loading symbol precision: {e}")
+            self.print_color(f"❌ Error loading symbol precision: {e}", Fore.RED)
     
     def format_price(self, pair, price):
         precision = self.price_precision.get(pair, 4)
         return round(price, precision)
     
     def scan_existing_positions(self):
-        """Binance ထဲမှာရှိပြီးသား position တွေကို scan လုပ်မယ် - DEBUGGED"""
+        """Binance ထဲမှာရှိပြီးသား position တွေကို scan လုပ်မယ်"""
         try:
             positions = self.binance.futures_position_information()
             self.existing_positions = {}
             
-            print(f"🔍 Scanning {len(positions)} positions from Binance...")
+            self.print_color(f"🔍 Scanning {len(positions)} positions from Binance...", Fore.CYAN)
             
             for pos in positions:
                 pair = pos['symbol']
-                
-                # ✅ DEBUG: Print all available fields
-                if pair in self.available_pairs:
-                    print(f"📋 Available fields for {pair}: {list(pos.keys())}")
-                
                 position_amt = float(pos['positionAmt'])
                 
                 if position_amt != 0 and pair in self.available_pairs:
-                    print(f"🎯 Found active position: {pair} - Amount: {position_amt}")
+                    self.print_color(f"🎯 Found active position: {pair} - Amount: {position_amt}", Fore.YELLOW)
                     
-                    # ✅ FIXED: Safe field access with defaults
                     entry_price = float(pos.get('entryPrice', 0))
-                    
-                    # ✅ FIXED: Handle different P&L field names
-                    unrealized_pnl = float(pos.get('unrealizedProfit', 
-                                            pos.get('unRealizedProfit', 
-                                            pos.get('unrealized_profit', 0))))
-                    
+                    unrealized_pnl = float(pos.get('unRealizedProfit', 0))
                     leverage = float(pos.get('leverage', self.leverage))
                     
                     # Get current price
@@ -133,7 +138,7 @@ class ExistingPositionTracker:
                     except:
                         current_price = entry_price
                     
-                    # Calculate P&L percentage manually if needed
+                    # Calculate P&L percentage
                     if position_amt < 0:  # SHORT
                         pnl_percent = (entry_price - current_price) / entry_price * 100 * leverage
                         direction = "SHORT"
@@ -162,33 +167,27 @@ class ExistingPositionTracker:
                         'status': 'ACTIVE'
                     }
                     
-                    print(f"✅ Successfully loaded existing position: {pair} {direction}")
-                    print(f"   Entry: ${entry_price:.4f} | Current: ${current_price:.4f}")
-                    print(f"   P&L: ${unrealized_pnl:.2f} ({pnl_percent:.2f}%)")
+                    pnl_color = Fore.GREEN if unrealized_pnl >= 0 else Fore.RED
+                    self.print_color(f"✅ Successfully loaded: {pair} {direction}", Fore.GREEN)
+                    self.print_color(f"   📍 Entry: ${entry_price:.4f} | 🎯 Current: ${current_price:.4f}", Fore.WHITE)
+                    self.print_color(f"   💰 P&L: ${unrealized_pnl:.2f} ({pnl_percent:.2f}%)", pnl_color)
             
-            print(f"📊 Total existing positions found: {len(self.existing_positions)}")
+            self.print_color(f"📊 Total existing positions found: {len(self.existing_positions)}", Fore.CYAN)
             return len(self.existing_positions)
             
         except Exception as e:
-            print(f"❌ Error scanning existing positions: {e}")
-            import traceback
-            traceback.print_exc()
+            self.print_color(f"❌ Error scanning existing positions: {e}", Fore.RED)
             return 0
     
     def get_live_position_data(self, pair):
-        """Live position data ကိုရယူမယ် - DEBUGGED"""
+        """Live position data ကိုရယူမယ်"""
         try:
             positions = self.binance.futures_position_information(symbol=pair)
             for pos in positions:
                 if pos['symbol'] == pair and float(pos['positionAmt']) != 0:
                     entry_price = float(pos.get('entryPrice', 0))
                     quantity = abs(float(pos['positionAmt']))
-                    
-                    # ✅ FIXED: Handle different P&L field names
-                    unrealized_pnl = float(pos.get('unrealizedProfit', 
-                                            pos.get('unRealizedProfit', 
-                                            pos.get('unrealized_profit', 0))))
-                    
+                    unrealized_pnl = float(pos.get('unRealizedProfit', 0))
                     leverage = float(pos.get('leverage', self.leverage))
                     
                     # Get current price
@@ -223,23 +222,22 @@ class ExistingPositionTracker:
                     }
             return None
         except Exception as e:
-            print(f"❌ Error getting live data for {pair}: {e}")
+            self.print_color(f"❌ Error getting live data for {pair}: {e}", Fore.RED)
             return None
     
     def display_live_dashboard(self):
-        """Live trading dashboard ကိုပြမယ်"""
-        print(f"\n📊 LIVE TRADING DASHBOARD - {time.strftime('%H:%M:%S')}")
-        print("=" * 80)
+        """Colorful live trading dashboard"""
+        self.print_color(f"\n📊 LIVE TRADING DASHBOARD - {time.strftime('%H:%M:%S')}", Fore.CYAN, Style.BRIGHT)
+        self.print_color("=" * 80, Fore.CYAN)
         
         # Update existing positions with live data
         for pair in list(self.existing_positions.keys()):
             live_data = self.get_live_position_data(pair)
             if live_data:
                 self.existing_positions[pair].update(live_data)
-                print(f"🔄 Updated live data for {pair}")
+                self.print_color(f"🔄 Updated live data for {pair}", Fore.BLUE)
             else:
-                # Position closed
-                print(f"✅ EXISTING POSITION CLOSED: {pair}")
+                self.print_color(f"✅ EXISTING POSITION CLOSED: {pair}", Fore.GREEN)
                 del self.existing_positions[pair]
         
         # Update bot opened trades with live data
@@ -248,14 +246,13 @@ class ExistingPositionTracker:
             if live_data:
                 self.bot_opened_trades[pair].update(live_data)
             else:
-                # Position closed
-                print(f"✅ BOT TRADE CLOSED: {pair}")
+                self.print_color(f"✅ BOT TRADE CLOSED: {pair}", Fore.GREEN)
                 del self.bot_opened_trades[pair]
         
         total_positions = len(self.existing_positions) + len(self.bot_opened_trades)
         
         if total_positions == 0:
-            print("🔄 No active positions")
+            self.print_color("🔄 No active positions", Fore.YELLOW)
             return
         
         total_unrealized_pnl = 0
@@ -263,67 +260,70 @@ class ExistingPositionTracker:
         
         # Display EXISTING positions first
         if self.existing_positions:
-            print("\n🏦 EXISTING POSITIONS (From Binance):")
-            print("-" * 50)
+            self.print_color("\n🏦 EXISTING POSITIONS (From Binance)", Fore.MAGENTA, Style.BRIGHT)
+            self.print_color("-" * 50, Fore.MAGENTA)
             for pair, position in self.existing_positions.items():
-                pnl_color = "🟢" if position['unrealized_pnl'] >= 0 else "🔴"
+                pnl_color = Fore.GREEN if position['unrealized_pnl'] >= 0 else Fore.RED
+                direction_color = Fore.BLUE if position['direction'] == 'LONG' else Fore.RED
                 direction_icon = "📈" if position['direction'] == 'LONG' else "📉"
                 
-                print(f"{direction_icon} {pair} {position['direction']} 🔸EXISTING")
-                print(f"   Size: {position['quantity']} (${position['position_value']:.2f})")
-                print(f"   Entry: ${position['entry_price']:.4f} | Current: ${position['current_price']:.4f}")
-                print(f"   P&L: {pnl_color} ${position['unrealized_pnl']:.2f} ({position['pnl_percent']:.2f}%)")
-                print(f"   Leverage: {position['leverage']}x")
-                print(f"   Status: 🔄 Monitoring (Skipped for new trades)")
-                print("-" * 30)
+                self.print_color(f"{direction_icon} {pair} {position['direction']} 🔸EXISTING", direction_color)
+                self.print_color(f"   📦 Size: {position['quantity']} (${position['position_value']:.2f})", Fore.WHITE)
+                self.print_color(f"   📍 Entry: ${position['entry_price']:.4f} | 🎯 Current: ${position['current_price']:.4f}", Fore.WHITE)
+                self.print_color(f"   💰 P&L: ${position['unrealized_pnl']:.2f} ({position['pnl_percent']:.2f}%)", pnl_color)
+                self.print_color(f"   ⚡ Leverage: {position['leverage']}x", Fore.CYAN)
+                self.print_color(f"   📊 Status: 🔄 Monitoring (Skipped for new trades)", Fore.YELLOW)
+                self.print_color("-" * 30, Fore.MAGENTA)
                 
                 total_unrealized_pnl += position['unrealized_pnl']
                 total_position_value += position['position_value']
         
         # Display BOT opened positions
         if self.bot_opened_trades:
-            print("\n🤖 BOT OPENED POSITIONS:")
-            print("-" * 50)
+            self.print_color("\n🤖 BOT OPENED POSITIONS", Fore.GREEN, Style.BRIGHT)
+            self.print_color("-" * 50, Fore.GREEN)
             for pair, trade in self.bot_opened_trades.items():
-                pnl_color = "🟢" if trade['unrealized_pnl'] >= 0 else "🔴"
+                pnl_color = Fore.GREEN if trade['unrealized_pnl'] >= 0 else Fore.RED
+                direction_color = Fore.BLUE if trade['direction'] == 'LONG' else Fore.RED
                 direction_icon = "📈" if trade['direction'] == 'LONG' else "📉"
                 
-                print(f"{direction_icon} {pair} {trade['direction']} 🔸BOT")
-                print(f"   Size: {trade['quantity']} (${trade['position_value']:.2f})")
-                print(f"   Entry: ${trade['entry_price']:.4f} | Current: ${trade['current_price']:.4f}")
-                print(f"   P&L: {pnl_color} ${trade['unrealized_pnl']:.2f} ({trade['pnl_percent']:.2f}%)")
-                print(f"   Leverage: {trade['leverage']}x")
+                self.print_color(f"{direction_icon} {pair} {trade['direction']} 🔸BOT", direction_color)
+                self.print_color(f"   📦 Size: {trade['quantity']} (${trade['position_value']:.2f})", Fore.WHITE)
+                self.print_color(f"   📍 Entry: ${trade['entry_price']:.4f} | 🎯 Current: ${trade['current_price']:.4f}", Fore.WHITE)
+                self.print_color(f"   💰 P&L: ${trade['unrealized_pnl']:.2f} ({trade['pnl_percent']:.2f}%)", pnl_color)
+                self.print_color(f"   ⚡ Leverage: {trade['leverage']}x", Fore.CYAN)
                 if 'take_profit' in trade:
-                    print(f"   TP: ${trade['take_profit']} | SL: ${trade['stop_loss']}")
-                print(f"   Duration: {(time.time() - trade['entry_time']) / 60:.1f} minutes")
-                print("-" * 30)
+                    self.print_color(f"   🎯 TP: ${trade['take_profit']} | 🛑 SL: ${trade['stop_loss']}", Fore.YELLOW)
+                self.print_color(f"   ⏱️ Duration: {(time.time() - trade['entry_time']) / 60:.1f} minutes", Fore.WHITE)
+                self.print_color("-" * 30, Fore.GREEN)
                 
                 total_unrealized_pnl += trade['unrealized_pnl']
                 total_position_value += trade['position_value']
         
         # Display summary
         if total_position_value > 0:
-            print(f"\n💰 TOTAL SUMMARY:")
-            print(f"   Positions: {total_positions} | P&L: ${total_unrealized_pnl:.2f}")
-            print(f"   Total Exposure: ${total_position_value:.2f}")
+            total_color = Fore.GREEN if total_unrealized_pnl >= 0 else Fore.RED
+            self.print_color(f"\n💰 TOTAL SUMMARY", Fore.CYAN, Style.BRIGHT)
+            self.print_color(f"   📊 Positions: {total_positions} | 💰 P&L: ${total_unrealized_pnl:.2f}", total_color)
+            self.print_color(f"   📈 Total Exposure: ${total_position_value:.2f}", Fore.WHITE)
             overall_pnl_percent = (total_unrealized_pnl / total_position_value) * 100 if total_position_value > 0 else 0
-            print(f"   Overall Return: {overall_pnl_percent:.2f}%")
+            self.print_color(f"   📊 Overall Return: {overall_pnl_percent:.2f}%", total_color)
             
             # Trading status
             if total_positions >= self.max_concurrent_trades:
-                print(f"   🚫 TRADING PAUSED - Maximum positions reached")
+                self.print_color(f"   🚫 TRADING PAUSED - Maximum positions reached", Fore.RED)
             else:
-                print(f"   ✅ TRADING ACTIVE - Can open new positions")
+                self.print_color(f"   ✅ TRADING ACTIVE - Can open new positions", Fore.GREEN)
     
     def can_open_new_trade(self, pair):
         """Check if we can open new trade for this pair"""
         if pair in self.existing_positions or pair in self.bot_opened_trades:
-            print(f"🚫 Skipping {pair} - position already exists")
+            self.print_color(f"🚫 Skipping {pair} - position already exists", Fore.YELLOW)
             return False
         
         total_positions = len(self.existing_positions) + len(self.bot_opened_trades)
         if total_positions >= self.max_concurrent_trades:
-            print(f"🚫 Skipping {pair} - max positions reached ({total_positions}/{self.max_concurrent_trades})")
+            self.print_color(f"🚫 Skipping {pair} - max positions reached ({total_positions}/{self.max_concurrent_trades})", Fore.RED)
             return False
         
         return True
@@ -345,7 +345,7 @@ class ExistingPositionTracker:
                 market_data[pair] = {'price': price}
                 
             except Exception as e:
-                print(f"❌ Market data error for {pair}: {e}")
+                self.print_color(f"❌ Market data error for {pair}: {e}", Fore.RED)
                 continue
                 
         return market_data
@@ -375,7 +375,7 @@ class ExistingPositionTracker:
             pair = decision["pair"]
             
             if not self.can_open_new_trade(pair):
-                print(f"🚫 Cannot open {pair} - position exists or limit reached")
+                self.print_color(f"🚫 Cannot open {pair} - position exists or limit reached", Fore.RED)
                 return False
             
             direction = decision["direction"]
@@ -400,8 +400,9 @@ class ExistingPositionTracker:
             if quantity < 0.1:
                 quantity = 0.1
             
-            print(f"🎯 EXECUTING: {pair} {direction}")
-            print(f"   Size: {quantity} | TP: ${take_profit} | SL: ${stop_loss}")
+            direction_color = Fore.BLUE if direction == 'LONG' else Fore.RED
+            self.print_color(f"🎯 EXECUTING: {pair} {direction}", direction_color)
+            self.print_color(f"   📦 Size: {quantity} | 🎯 TP: ${take_profit} | 🛑 SL: ${stop_loss}", Fore.WHITE)
             
             # Store in bot opened trades
             self.bot_opened_trades[pair] = {
@@ -413,14 +414,14 @@ class ExistingPositionTracker:
                 "take_profit": take_profit,
                 "entry_time": time.time(),
                 "source": "BOT",
-                "status": 'ACTIVE'
+                'status': 'ACTIVE'
             }
             
-            print(f"🚀 BOT TRADE ACTIVATED: {pair} {direction}")
+            self.print_color(f"🚀 BOT TRADE ACTIVATED: {pair} {direction}", Fore.GREEN)
             return True
             
         except Exception as e:
-            print(f"❌ Trade execution failed: {e}")
+            self.print_color(f"❌ Trade execution failed: {e}", Fore.RED)
             return False
 
     def run_trading_cycle(self):
@@ -429,7 +430,7 @@ class ExistingPositionTracker:
             # Scan for existing positions first
             existing_count = self.scan_existing_positions()
             if existing_count > 0:
-                print(f"🔍 Found {existing_count} existing positions")
+                self.print_color(f"🔍 Found {existing_count} existing positions", Fore.CYAN)
             
             # Display live dashboard
             self.display_live_dashboard()
@@ -441,26 +442,26 @@ class ExistingPositionTracker:
                 market_data = self.get_market_data()
                 
                 if market_data:
-                    print(f"\n🔄 Looking for new trade opportunities...")
+                    self.print_color(f"\n🔄 Looking for new trade opportunities...", Fore.BLUE)
                     for pair in market_data.keys():
                         if self.can_open_new_trade(pair):
                             pair_data = {pair: market_data[pair]}
                             decision = self.get_ai_decision(pair_data)
                             
                             if decision["action"] == "TRADE":
-                                print(f"✅ QUALIFIED: {pair}")
+                                self.print_color(f"✅ QUALIFIED: {pair}", Fore.GREEN)
                                 success = self.execute_trade(decision)
                                 if success:
                                     break
             else:
-                print(f"🚫 Maximum positions reached ({total_positions}/{self.max_concurrent_trades}) - Skipping new trades")
+                self.print_color(f"🚫 Maximum positions reached ({total_positions}/{self.max_concurrent_trades}) - Skipping new trades", Fore.RED)
             
         except Exception as e:
-            print(f"❌ Trading cycle error: {e}")
+            self.print_color(f"❌ Trading cycle error: {e}", Fore.RED)
 
     def start_trading(self):
-        print("🚀 STARTING EXISTING POSITION TRACKER!")
-        print("🔍 Scanning for existing positions in Binance...")
+        self.print_color("🚀 STARTING EXISTING POSITION TRACKER!", Fore.CYAN, Style.BRIGHT)
+        self.print_color("🔍 Scanning for existing positions in Binance...", Fore.CYAN)
         
         self.scan_existing_positions()
         
@@ -469,24 +470,24 @@ class ExistingPositionTracker:
         while True:
             try:
                 cycle_count += 1
-                print(f"\n{'='*80}")
-                print(f"🔄 CYCLE {cycle_count} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
-                print(f"{'='*80}")
+                self.print_color(f"\n{'='*80}", Fore.CYAN)
+                self.print_color(f"🔄 CYCLE {cycle_count} - {time.strftime('%Y-%m-%d %H:%M:%S')}", Fore.CYAN, Style.BRIGHT)
+                self.print_color(f"{'='*80}", Fore.CYAN)
                 
                 self.run_trading_cycle()
                 
                 time.sleep(30)
                 
             except KeyboardInterrupt:
-                print(f"\n🛑 BOT STOPPED BY USER")
+                self.print_color(f"\n🛑 BOT STOPPED BY USER", Fore.RED)
                 break
             except Exception as e:
-                print(f"❌ Main loop error: {e}")
+                self.print_color(f"❌ Main loop error: {e}", Fore.RED)
                 time.sleep(30)
 
 if __name__ == "__main__":
     try:
-        bot = ExistingPositionTracker()
+        bot = ColorfulPositionTracker()
         bot.start_trading()
     except Exception as e:
         print(f"❌ Failed to start bot: {e}")
