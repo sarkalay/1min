@@ -886,7 +886,7 @@ class MultiPairScalpingTrader:
                     pair_data = {pair: market_data[pair]}
                     decision = self.get_scalping_decision(pair_data)
                     
-                    if decision["action"] == "TRADE" and decision["confidence"] >= 65:
+                    if decision["action"] == "TRADE" and decision["confidence"] >= 60:
                         trade_opportunities.append((decision, decision["confidence"]))
             
             # Sort by confidence and execute top opportunities
