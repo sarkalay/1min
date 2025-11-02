@@ -22,12 +22,12 @@ class ExistingPositionTracker:
         self.leverage = 5
         
         # Multi-pair parameters
-        self.max_concurrent_trades = 1  # ✅ Only 1 trade at a time
+        self.max_concurrent_trades = 1
         self.available_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
         
         # Track both bot-opened and existing positions
-        self.bot_opened_trades = {}  # Bot ကဖွင့်တဲ့ trades
-        self.existing_positions = {}  # Binance ထဲကရှိပြီးသား positions
+        self.bot_opened_trades = {}
+        self.existing_positions = {}
         
         # Precision settings
         self.quantity_precision = {}
@@ -57,7 +57,6 @@ class ExistingPositionTracker:
         return True
 
     def setup_futures(self):
-        """✅ ADDED: Setup futures leverage"""
         try:
             for pair in self.available_pairs:
                 try:
@@ -94,12 +93,11 @@ class ExistingPositionTracker:
             print(f"❌ Error loading symbol precision: {e}")
     
     def format_price(self, pair, price):
-        """✅ ADDED: Format price with precision"""
         precision = self.price_precision.get(pair, 4)
         return round(price, precision)
     
     def scan_existing_positions(self):
-        """Binance ထဲမှာရှိပြီးသား position တွေကို scan လုပ်မယ်"""
+        """Binance ထဲမှာရှိပြီးသား position တွေကို scan လုပ်မယ် - FIXED"""
         try:
             positions = self.binance.futures_position_information()
             self.existing_positions = {}
@@ -111,8 +109,13 @@ class ExistingPositionTracker:
                 if position_amt != 0 and pair in self.available_pairs:
                     # Existing position found
                     entry_price = float(pos['entryPrice'])
-                    leverage = float(pos['leverage'])
                     unrealized_pnl = float(pos['unrealizedProfit'])
+                    
+                    # ✅ FIXED: Handle missing leverage field
+                    try:
+                        leverage = float(pos.get('leverage', self.leverage))  # Default to 5x if not found
+                    except:
+                        leverage = self.leverage
                     
                     # Get current price
                     ticker = self.binance.futures_symbol_ticker(symbol=pair)
@@ -135,8 +138,8 @@ class ExistingPositionTracker:
                         'unrealized_pnl': unrealized_pnl,
                         'pnl_percent': pnl_percent,
                         'position_value': abs(position_amt) * current_price,
-                        'entry_time': time.time() - 3600,  # Assume entered 1 hour ago
-                        'source': 'EXISTING',  # Mark as existing position
+                        'entry_time': time.time() - 3600,
+                        'source': 'EXISTING',
                         'status': 'ACTIVE'
                     }
                     
@@ -149,15 +152,20 @@ class ExistingPositionTracker:
             return 0
     
     def get_live_position_data(self, pair):
-        """Live position data ကိုရယူမယ်"""
+        """Live position data ကိုရယူမယ် - FIXED"""
         try:
             positions = self.binance.futures_position_information(symbol=pair)
             for pos in positions:
                 if pos['symbol'] == pair and float(pos['positionAmt']) != 0:
                     entry_price = float(pos['entryPrice'])
                     quantity = abs(float(pos['positionAmt']))
-                    leverage = float(pos['leverage'])
                     unrealized_pnl = float(pos['unrealizedProfit'])
+                    
+                    # ✅ FIXED: Handle missing leverage
+                    try:
+                        leverage = float(pos.get('leverage', self.leverage))
+                    except:
+                        leverage = self.leverage
                     
                     # Get current price
                     ticker = self.binance.futures_symbol_ticker(symbol=pair)
@@ -277,11 +285,9 @@ class ExistingPositionTracker:
     
     def can_open_new_trade(self, pair):
         """Check if we can open new trade for this pair"""
-        # Check if pair already has position (existing or bot)
         if pair in self.existing_positions or pair in self.bot_opened_trades:
             return False
         
-        # Check total positions count
         total_positions = len(self.existing_positions) + len(self.bot_opened_trades)
         if total_positions >= self.max_concurrent_trades:
             return False
@@ -293,7 +299,6 @@ class ExistingPositionTracker:
         market_data = {}
         
         for pair in self.available_pairs:
-            # Skip pairs that already have positions
             if not self.can_open_new_trade(pair):
                 continue
                 
@@ -317,7 +322,6 @@ class ExistingPositionTracker:
         data = market_data[pair]
         current_price = data['price']
         
-        # Simple AI decision (you can enhance this)
         import random
         direction = "LONG" if random.random() > 0.5 else "SHORT"
         
@@ -336,18 +340,15 @@ class ExistingPositionTracker:
         try:
             pair = decision["pair"]
             
-            # Double check if we can open this trade
             if not self.can_open_new_trade(pair):
                 print(f"🚫 Cannot open {pair} - position exists or limit reached")
                 return False
             
             direction = decision["direction"]
             
-            # Get current price
             ticker = self.binance.futures_symbol_ticker(symbol=pair)
             current_price = float(ticker['price'])
             
-            # Simple TP/SL calculation
             if direction == "LONG":
                 stop_loss = current_price * 0.995
                 take_profit = current_price * 1.008
@@ -358,7 +359,6 @@ class ExistingPositionTracker:
             stop_loss = self.format_price(pair, stop_loss)
             take_profit = self.format_price(pair, take_profit)
             
-            # Quantity calculation
             quantity = self.trade_size_usd / current_price
             precision = self.quantity_precision.get(pair, 3)
             quantity = round(quantity, precision)
@@ -368,9 +368,6 @@ class ExistingPositionTracker:
             
             print(f"🎯 EXECUTING: {pair} {direction}")
             print(f"   Size: {quantity} | TP: ${take_profit} | SL: ${stop_loss}")
-            
-            # Execute trade (simplified - add your actual order execution)
-            # order = self.binance.futures_create_order(...)
             
             # Store in bot opened trades
             self.bot_opened_trades[pair] = {
@@ -407,7 +404,6 @@ class ExistingPositionTracker:
             total_positions = len(self.existing_positions) + len(self.bot_opened_trades)
             
             if total_positions < self.max_concurrent_trades:
-                # Get market data for available pairs only
                 market_data = self.get_market_data()
                 
                 if market_data:
@@ -421,7 +417,7 @@ class ExistingPositionTracker:
                                 print(f"✅ QUALIFIED: {pair}")
                                 success = self.execute_trade(decision)
                                 if success:
-                                    break  # Only open one trade per cycle
+                                    break
             else:
                 print(f"🚫 Maximum positions reached ({total_positions}/{self.max_concurrent_trades}) - Skipping new trades")
             
@@ -432,7 +428,6 @@ class ExistingPositionTracker:
         print("🚀 STARTING EXISTING POSITION TRACKER!")
         print("🔍 Scanning for existing positions in Binance...")
         
-        # Initial scan
         self.scan_existing_positions()
         
         cycle_count = 0
@@ -446,7 +441,6 @@ class ExistingPositionTracker:
                 
                 self.run_trading_cycle()
                 
-                # Refresh every 30 seconds
                 time.sleep(30)
                 
             except KeyboardInterrupt:
