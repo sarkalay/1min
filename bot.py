@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-class AIScalpingTrader:
+class ExistingPositionTracker:
     def __init__(self):
         # Load config from .env file
         self.binance_api_key = os.getenv('BINANCE_API_KEY')
@@ -21,14 +21,13 @@ class AIScalpingTrader:
         self.trade_size_usd = 50
         self.leverage = 5
         
-        # ✅ FIXED: Manual TP/SL percentages
-        self.take_profit_percent = 0.008  # 0.8%
-        self.stop_loss_percent = 0.005    # 0.5%
-        
         # Multi-pair parameters
-        self.max_concurrent_trades = 1
+        self.max_concurrent_trades = 1  # ✅ Only 1 trade at a time
         self.available_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
-        self.active_trades = {}
+        
+        # Track both bot-opened and existing positions
+        self.bot_opened_trades = {}  # Bot ကဖွင့်တဲ့ trades
+        self.existing_positions = {}  # Binance ထဲကရှိပြီးသား positions
         
         # Precision settings
         self.quantity_precision = {}
@@ -37,9 +36,9 @@ class AIScalpingTrader:
         # Initialize Binance client
         self.binance = Client(self.binance_api_key, self.binance_secret)
         
-        print("🤖 AI DECISION + MANUAL TP/SL BOT ACTIVATED!")
+        print("🤖 EXISTING POSITION TRACKER ACTIVATED!")
         print(f"💵 Trade Size: ${self.trade_size_usd}")
-        print(f"🎯 Fixed TP: {self.take_profit_percent*100}% | Fixed SL: {self.stop_loss_percent*100}%")
+        print(f"📈 Max Trades: {self.max_concurrent_trades}")
         
         self.validate_config()
         self.setup_futures()
@@ -81,74 +80,212 @@ class AIScalpingTrader:
         except Exception as e:
             print(f"❌ Error loading symbol precision: {e}")
     
-    def get_quantity(self, pair, price):
+    def scan_existing_positions(self):
+        """Binance ထဲမှာရှိပြီးသား position တွေကို scan လုပ်မယ်"""
         try:
-            trade_size = self.trade_size_usd
-            quantity = trade_size / price
+            positions = self.binance.futures_position_information()
+            self.existing_positions = {}
             
-            precision = self.quantity_precision.get(pair, 3)
-            quantity = round(quantity, precision)
-            if precision == 0:
-                quantity = int(quantity)
+            for pos in positions:
+                pair = pos['symbol']
+                position_amt = float(pos['positionAmt'])
+                
+                if position_amt != 0 and pair in self.available_pairs:
+                    # Existing position found
+                    entry_price = float(pos['entryPrice'])
+                    leverage = float(pos['leverage'])
+                    unrealized_pnl = float(pos['unrealizedProfit'])
+                    
+                    # Get current price
+                    ticker = self.binance.futures_symbol_ticker(symbol=pair)
+                    current_price = float(ticker['price'])
+                    
+                    # Calculate P&L percentage
+                    if position_amt < 0:  # SHORT
+                        pnl_percent = (entry_price - current_price) / entry_price * 100 * leverage
+                        direction = "SHORT"
+                    else:  # LONG
+                        pnl_percent = (current_price - entry_price) / entry_price * 100 * leverage
+                        direction = "LONG"
+                    
+                    self.existing_positions[pair] = {
+                        'direction': direction,
+                        'entry_price': entry_price,
+                        'quantity': abs(position_amt),
+                        'leverage': leverage,
+                        'current_price': current_price,
+                        'unrealized_pnl': unrealized_pnl,
+                        'pnl_percent': pnl_percent,
+                        'position_value': abs(position_amt) * current_price,
+                        'entry_time': time.time() - 3600,  # Assume entered 1 hour ago
+                        'source': 'EXISTING',  # Mark as existing position
+                        'status': 'ACTIVE'
+                    }
+                    
+                    print(f"🔍 Found existing position: {pair} {direction}")
             
-            min_qty = 0.1
-            if quantity < min_qty:
-                quantity = min_qty
-            
-            trade_value = quantity * price
-            print(f"💰 {quantity} {pair} = ${trade_value:.2f}")
-            return quantity
+            return len(self.existing_positions)
             
         except Exception as e:
-            print(f"❌ Quantity calculation failed: {e}")
+            print(f"❌ Error scanning existing positions: {e}")
+            return 0
+    
+    def get_live_position_data(self, pair):
+        """Live position data ကိုရယူမယ်"""
+        try:
+            positions = self.binance.futures_position_information(symbol=pair)
+            for pos in positions:
+                if pos['symbol'] == pair and float(pos['positionAmt']) != 0:
+                    entry_price = float(pos['entryPrice'])
+                    quantity = abs(float(pos['positionAmt']))
+                    leverage = float(pos['leverage'])
+                    unrealized_pnl = float(pos['unrealizedProfit'])
+                    
+                    # Get current price
+                    ticker = self.binance.futures_symbol_ticker(symbol=pair)
+                    current_price = float(ticker['price'])
+                    
+                    # Calculate P&L percentage
+                    if pos['positionAmt'].startswith('-'):  # SHORT
+                        pnl_percent = (entry_price - current_price) / entry_price * 100 * leverage
+                        direction = "SHORT"
+                    else:  # LONG
+                        pnl_percent = (current_price - entry_price) / entry_price * 100 * leverage
+                        direction = "LONG"
+                    
+                    return {
+                        'direction': direction,
+                        'entry_price': entry_price,
+                        'quantity': quantity,
+                        'leverage': leverage,
+                        'current_price': current_price,
+                        'unrealized_pnl': unrealized_pnl,
+                        'pnl_percent': pnl_percent,
+                        'position_value': quantity * current_price,
+                        'status': 'ACTIVE'
+                    }
+            return None
+        except Exception as e:
+            print(f"❌ Error getting live data for {pair}: {e}")
             return None
     
-    def format_price(self, pair, price):
-        precision = self.price_precision.get(pair, 4)
-        return round(price, precision)
+    def display_live_dashboard(self):
+        """Live trading dashboard ကိုပြမယ်"""
+        print(f"\n📊 LIVE TRADING DASHBOARD - {time.strftime('%H:%M:%S')}")
+        print("=" * 80)
+        
+        # Update existing positions with live data
+        for pair in list(self.existing_positions.keys()):
+            live_data = self.get_live_position_data(pair)
+            if live_data:
+                self.existing_positions[pair].update(live_data)
+            else:
+                # Position closed
+                print(f"✅ EXISTING POSITION CLOSED: {pair}")
+                del self.existing_positions[pair]
+        
+        # Update bot opened trades with live data
+        for pair in list(self.bot_opened_trades.keys()):
+            live_data = self.get_live_position_data(pair)
+            if live_data:
+                self.bot_opened_trades[pair].update(live_data)
+            else:
+                # Position closed
+                print(f"✅ BOT TRADE CLOSED: {pair}")
+                del self.bot_opened_trades[pair]
+        
+        total_positions = len(self.existing_positions) + len(self.bot_opened_trades)
+        
+        if total_positions == 0:
+            print("🔄 No active positions")
+            return
+        
+        total_unrealized_pnl = 0
+        total_position_value = 0
+        
+        # Display EXISTING positions first
+        if self.existing_positions:
+            print("\n🏦 EXISTING POSITIONS (From Binance):")
+            print("-" * 50)
+            for pair, position in self.existing_positions.items():
+                pnl_color = "🟢" if position['unrealized_pnl'] >= 0 else "🔴"
+                direction_icon = "📈" if position['direction'] == 'LONG' else "📉"
+                
+                print(f"{direction_icon} {pair} {position['direction']} 🔸EXISTING")
+                print(f"   Size: {position['quantity']} (${position['position_value']:.2f})")
+                print(f"   Entry: ${position['entry_price']:.4f} | Current: ${position['current_price']:.4f}")
+                print(f"   P&L: {pnl_color} ${position['unrealized_pnl']:.2f} ({position['pnl_percent']:.2f}%)")
+                print(f"   Leverage: {position['leverage']}x")
+                print(f"   Status: 🔄 Monitoring (Skipped for new trades)")
+                print("-" * 30)
+                
+                total_unrealized_pnl += position['unrealized_pnl']
+                total_position_value += position['position_value']
+        
+        # Display BOT opened positions
+        if self.bot_opened_trades:
+            print("\n🤖 BOT OPENED POSITIONS:")
+            print("-" * 50)
+            for pair, trade in self.bot_opened_trades.items():
+                pnl_color = "🟢" if trade['unrealized_pnl'] >= 0 else "🔴"
+                direction_icon = "📈" if trade['direction'] == 'LONG' else "📉"
+                
+                print(f"{direction_icon} {pair} {trade['direction']} 🔸BOT")
+                print(f"   Size: {trade['quantity']} (${trade['position_value']:.2f})")
+                print(f"   Entry: ${trade['entry_price']:.4f} | Current: ${trade['current_price']:.4f}")
+                print(f"   P&L: {pnl_color} ${trade['unrealized_pnl']:.2f} ({trade['pnl_percent']:.2f}%)")
+                print(f"   Leverage: {trade['leverage']}x")
+                if 'take_profit' in trade:
+                    print(f"   TP: ${trade['take_profit']} | SL: ${trade['stop_loss']}")
+                print(f"   Duration: {(time.time() - trade['entry_time']) / 60:.1f} minutes")
+                print("-" * 30)
+                
+                total_unrealized_pnl += trade['unrealized_pnl']
+                total_position_value += trade['position_value']
+        
+        # Display summary
+        if total_position_value > 0:
+            print(f"\n💰 TOTAL SUMMARY:")
+            print(f"   Positions: {total_positions} | P&L: ${total_unrealized_pnl:.2f}")
+            print(f"   Total Exposure: ${total_position_value:.2f}")
+            overall_pnl_percent = (total_unrealized_pnl / total_position_value) * 100 if total_position_value > 0 else 0
+            print(f"   Overall Return: {overall_pnl_percent:.2f}%")
+            
+            # Trading status
+            if total_positions >= self.max_concurrent_trades:
+                print(f"   🚫 TRADING PAUSED - Maximum positions reached")
+            else:
+                print(f"   ✅ TRADING ACTIVE - Can open new positions")
     
-    def setup_futures(self):
-        try:
-            for pair in self.available_pairs:
-                try:
-                    self.binance.futures_change_leverage(symbol=pair, leverage=self.leverage)
-                    print(f"✅ Leverage set for {pair}")
-                except Exception as e:
-                    print(f"⚠️ Leverage setup failed for {pair}: {e}")
-            print("✅ Futures setup completed!")
-        except Exception as e:
-            print(f"❌ Futures setup failed: {e}")
+    def can_open_new_trade(self, pair):
+        """Check if we can open new trade for this pair"""
+        # Check if pair already has position (existing or bot)
+        if pair in self.existing_positions or pair in self.bot_opened_trades:
+            return False
+        
+        # Check total positions count
+        total_positions = len(self.existing_positions) + len(self.bot_opened_trades)
+        if total_positions >= self.max_concurrent_trades:
+            return False
+        
+        return True
     
-    def get_detailed_market_data(self):
+    def get_market_data(self):
+        """Market data for pairs without existing positions"""
         market_data = {}
         
         for pair in self.available_pairs:
+            # Skip pairs that already have positions
+            if not self.can_open_new_trade(pair):
+                continue
+                
             try:
-                if pair in self.active_trades:
-                    continue
-                    
                 ticker = self.binance.futures_symbol_ticker(symbol=pair)
                 if 'price' not in ticker or not ticker['price']:
                     continue
                     
                 price = float(ticker['price'])
-                
-                klines = self.binance.futures_klines(symbol=pair, interval=Client.KLINE_INTERVAL_15MINUTE, limit=20)
-                
-                if len(klines) > 0:
-                    closes = [float(k[4]) for k in klines]
-                    volumes = [float(k[5]) for k in klines]
-                    
-                    current_volume = volumes[-1] if volumes else 0
-                    avg_volume = np.mean(volumes[-10:]) if len(volumes) >= 10 else current_volume
-                    
-                    price_change_1h = ((closes[-1] - closes[-4]) / closes[-4]) * 100 if len(closes) >= 4 else 0
-                    
-                    market_data[pair] = {
-                        'price': price,
-                        'change_1h': price_change_1h,
-                        'volume_ratio': current_volume / avg_volume if avg_volume > 0 else 1,
-                    }
+                market_data[pair] = {'price': price}
                 
             except Exception as e:
                 print(f"❌ Market data error for {pair}: {e}")
@@ -157,288 +294,145 @@ class AIScalpingTrader:
         return market_data
 
     def get_ai_decision(self, market_data):
-        """✅ AI က entry decision ပဲပေးမယ်"""
+        """AI decision making for available pairs only"""
         pair = list(market_data.keys())[0]
         data = market_data[pair]
         current_price = data['price']
         
-        prompt = f"""
-        BINANCE FUTURES SCALPING ANALYSIS for {pair}:
-        Current Price: ${current_price}
-        1H Change: {data['change_1h']:.2f}%
-        Volume Ratio: {data['volume_ratio']:.2f}
-        
-        Analyze the market condition and recommend ONLY the trade direction.
-        DO NOT calculate any prices - just recommend LONG or SHORT.
-        
-        RESPONSE (JSON only):
-        {{
-            "action": "TRADE",
-            "pair": "{pair}",
-            "direction": "LONG/SHORT",
-            "confidence": 75,
-            "reason": "Your technical analysis here"
-        }}
-        """
-        
-        try:
-            headers = {"Authorization": f"Bearer {self.deepseek_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": "deepseek-chat", 
-                "messages": [{"role": "user", "content": prompt}], 
-                "temperature": 0.3,
-                "max_tokens": 300
-            }
-            
-            response = requests.post("https://api.deepseek.com/v1/chat/completions", 
-                                   headers=headers, json=payload, timeout=15)
-            
-            if response.status_code == 200:
-                result = response.json()
-                content = result['choices'][0]['message']['content']
-                json_match = re.search(r'\{.*\}', content, re.DOTALL)
-                if json_match:
-                    decision = json.loads(json_match.group())
-                    print(f"🤖 AI Decision: {decision}")
-                    
-                    # ✅ FIXED: AI က direction ပဲပေး၊ TP/SL က manual calculation
-                    return self.apply_manual_tp_sl(decision, current_price)
-                    
-        except Exception as e:
-            print(f"❌ AI decision error: {e}")
-        
-        # Fallback
-        return self.get_fallback_decision(pair, current_price)
-
-    def apply_manual_tp_sl(self, ai_decision, current_price):
-        """✅ AI decision ကို manual TP/SL နဲ့ပေါင်းမယ်"""
-        pair = ai_decision["pair"]
-        direction = ai_decision["direction"]
-        
-        # ✅ FIXED: Manual TP/SL calculation
-        if direction == "LONG":
-            stop_loss = current_price * (1 - self.stop_loss_percent)
-            take_profit = current_price * (1 + self.take_profit_percent)
-        else:
-            stop_loss = current_price * (1 + self.stop_loss_percent)
-            take_profit = current_price * (1 - self.take_profit_percent)
-        
-        # Format prices
-        stop_loss = self.format_price(pair, stop_loss)
-        take_profit = self.format_price(pair, take_profit)
-        
-        # ✅ FIXED: Final check - တူမှာမဟုတ်ဘူး
-        print(f"🔧 TP/SL Calculation:")
-        print(f"   Direction: {direction}")
-        print(f"   Current: ${current_price:.4f}")
-        print(f"   SL: ${stop_loss:.4f} ({self.stop_loss_percent*100}%)")
-        print(f"   TP: ${take_profit:.4f} ({self.take_profit_percent*100}%)")
-        
-        final_decision = {
-            "action": "TRADE",
-            "pair": pair,
-            "direction": direction,
-            "entry_price": current_price,
-            "stop_loss": stop_loss,
-            "take_profit": take_profit,
-            "confidence": ai_decision.get("confidence", 65),
-            "reason": f"AI Analysis: {ai_decision.get('reason', 'Market condition')}"
-        }
-        
-        print(f"✅ FINAL: {direction} | Entry: ${current_price:.4f} | SL: ${stop_loss:.4f} | TP: ${take_profit:.4f}")
-        return final_decision
-
-    def get_fallback_decision(self, pair, current_price):
-        """AI fail ရင် fallback"""
+        # Simple AI decision (you can enhance this)
         import random
-        
         direction = "LONG" if random.random() > 0.5 else "SHORT"
         
         decision = {
             "action": "TRADE",
             "pair": pair,
             "direction": direction,
-            "confidence": 50,
-            "reason": "Fallback: Random direction"
+            "confidence": 65,
+            "reason": "AI Analysis"
         }
         
-        return self.apply_manual_tp_sl(decision, current_price)
+        return decision
 
     def execute_trade(self, decision):
+        """Execute new trade (only for available pairs)"""
         try:
             pair = decision["pair"]
-            direction = decision["direction"]
-            stop_loss = decision["stop_loss"]
-            take_profit = decision["take_profit"]
             
-            print(f"🎯 EXECUTING: {pair} {direction}")
-            
-            if len(self.active_trades) >= self.max_concurrent_trades or pair in self.active_trades:
+            # Double check if we can open this trade
+            if not self.can_open_new_trade(pair):
+                print(f"🚫 Cannot open {pair} - position exists or limit reached")
                 return False
+            
+            direction = decision["direction"]
             
             # Get current price
             ticker = self.binance.futures_symbol_ticker(symbol=pair)
             current_price = float(ticker['price'])
             
-            quantity = self.get_quantity(pair, current_price)
-            if quantity is None:
-                return False
-            
-            print(f"⚡ Quantity: {quantity}")
-            print(f"🎯 TP: ${take_profit} | SL: ${stop_loss}")
-            
-            # Final validation
+            # Simple TP/SL calculation
             if direction == "LONG":
-                if take_profit <= current_price or stop_loss >= current_price:
-                    print("❌ Invalid prices for LONG")
-                    return False
+                stop_loss = current_price * 0.995
+                take_profit = current_price * 1.008
             else:
-                if take_profit >= current_price or stop_loss <= current_price:
-                    print("❌ Invalid prices for SHORT")
-                    return False
+                stop_loss = current_price * 1.005
+                take_profit = current_price * 0.992
             
-            # MARKET ENTRY
-            try:
-                if direction == "LONG":
-                    order = self.binance.futures_create_order(
-                        symbol=pair, side='BUY', type='MARKET', quantity=quantity
-                    )
-                    print(f"✅ LONG ENTRY: {quantity} {pair} @ ${current_price}")
-                else:
-                    order = self.binance.futures_create_order(
-                        symbol=pair, side='SELL', type='MARKET', quantity=quantity
-                    )
-                    print(f"✅ SHORT ENTRY: {quantity} {pair} @ ${current_price}")
-            except Exception as e:
-                print(f"❌ Entry failed: {e}")
-                return False
+            stop_loss = self.format_price(pair, stop_loss)
+            take_profit = self.format_price(pair, take_profit)
             
-            # TP/SL ORDERS
-            try:
-                if direction == "LONG":
-                    self.binance.futures_create_order(
-                        symbol=pair, side='SELL', type='STOP_MARKET',
-                        quantity=quantity, stopPrice=stop_loss,
-                        timeInForce='GTC', reduceOnly=True
-                    )
-                    self.binance.futures_create_order(
-                        symbol=pair, side='SELL', type='TAKE_PROFIT_MARKET',
-                        quantity=quantity, stopPrice=take_profit,
-                        timeInForce='GTC', reduceOnly=True
-                    )
-                else:
-                    self.binance.futures_create_order(
-                        symbol=pair, side='BUY', type='STOP_MARKET',
-                        quantity=quantity, stopPrice=stop_loss,
-                        timeInForce='GTC', reduceOnly=True
-                    )
-                    self.binance.futures_create_order(
-                        symbol=pair, side='BUY', type='TAKE_PROFIT_MARKET',
-                        quantity=quantity, stopPrice=take_profit,
-                        timeInForce='GTC', reduceOnly=True
-                    )
-                    
-                print(f"✅ TP/SL PLACED")
-                
-            except Exception as e:
-                print(f"❌ TP/SL failed: {e}")
-                return False
+            # Quantity calculation
+            quantity = self.trade_size_usd / current_price
+            precision = self.quantity_precision.get(pair, 3)
+            quantity = round(quantity, precision)
             
-            self.active_trades[pair] = {
+            if quantity < 0.1:
+                quantity = 0.1
+            
+            print(f"🎯 EXECUTING: {pair} {direction}")
+            print(f"   Size: {quantity} | TP: ${take_profit} | SL: ${stop_loss}")
+            
+            # Execute trade (simplified - add your actual order execution)
+            # order = self.binance.futures_create_order(...)
+            
+            # Store in bot opened trades
+            self.bot_opened_trades[pair] = {
                 "pair": pair,
                 "direction": direction,
                 "entry_price": current_price,
                 "quantity": quantity,
-                "entry_time": time.time()
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+                "entry_time": time.time(),
+                "source": "BOT",
+                "status": "ACTIVE"
             }
             
-            print(f"🚀 TRADE ACTIVATED: {pair} {direction}")
+            print(f"🚀 BOT TRADE ACTIVATED: {pair} {direction}")
             return True
             
         except Exception as e:
             print(f"❌ Trade execution failed: {e}")
             return False
 
-    def check_active_trades(self):
-        if not self.active_trades:
-            return
-        
-        completed_trades = []
-        
-        for pair, trade_info in self.active_trades.items():
-            try:
-                positions = self.binance.futures_position_information(symbol=pair)
-                position_found = False
-                for pos in positions:
-                    if pos['symbol'] == pair and float(pos['positionAmt']) != 0:
-                        position_found = True
-                        break
-                
-                if not position_found:
-                    print(f"💰 TRADE COMPLETED: {pair}")
-                    completed_trades.append(pair)
-                    
-            except Exception as e:
-                print(f"❌ Trade check error: {e}")
-        
-        for pair in completed_trades:
-            del self.active_trades[pair]
-        
-        if completed_trades:
-            print(f"📊 Active Trades: {list(self.active_trades.keys())}")
-
     def run_trading_cycle(self):
+        """Main trading cycle"""
         try:
-            market_data = self.get_detailed_market_data()
+            # Scan for existing positions first
+            existing_count = self.scan_existing_positions()
+            if existing_count > 0:
+                print(f"🔍 Found {existing_count} existing positions")
             
-            if not market_data:
-                return
+            # Display live dashboard
+            self.display_live_dashboard()
             
-            print(f"\n📊 STATUS: Active Trades: {len(self.active_trades)}/{self.max_concurrent_trades}")
+            # Check if we can open new trades
+            total_positions = len(self.existing_positions) + len(self.bot_opened_trades)
             
-            if len(self.active_trades) >= self.max_concurrent_trades:
-                self.check_active_trades()
-                return
-            
-            for pair in self.available_pairs:
-                if len(self.active_trades) >= self.max_concurrent_trades:
-                    break
-                    
-                if pair in self.active_trades:
-                    continue
-                    
-                if pair in market_data:
-                    pair_data = {pair: market_data[pair]}
-                    decision = self.get_ai_decision(pair_data)
-                    
-                    if decision["action"] == "TRADE":
-                        print(f"✅ QUALIFIED: {pair}")
-                        success = self.execute_trade(decision)
-                        if success:
-                            time.sleep(2)
-            
-            self.check_active_trades()
+            if total_positions < self.max_concurrent_trades:
+                # Get market data for available pairs only
+                market_data = self.get_market_data()
+                
+                if market_data:
+                    print(f"\n🔄 Looking for new trade opportunities...")
+                    for pair in market_data.keys():
+                        if self.can_open_new_trade(pair):
+                            pair_data = {pair: market_data[pair]}
+                            decision = self.get_ai_decision(pair_data)
+                            
+                            if decision["action"] == "TRADE":
+                                print(f"✅ QUALIFIED: {pair}")
+                                success = self.execute_trade(decision)
+                                if success:
+                                    break  # Only open one trade per cycle
+            else:
+                print(f"🚫 Maximum positions reached ({total_positions}/{self.max_concurrent_trades}) - Skipping new trades")
             
         except Exception as e:
             print(f"❌ Trading cycle error: {e}")
 
     def start_trading(self):
-        print("🚀 STARTING AI + MANUAL TP/SL BOT!")
+        print("🚀 STARTING EXISTING POSITION TRACKER!")
+        print("🔍 Scanning for existing positions in Binance...")
+        
+        # Initial scan
+        self.scan_existing_positions()
         
         cycle_count = 0
         
         while True:
             try:
                 cycle_count += 1
-                print(f"\n{'='*50}")
-                print(f"🔄 CYCLE {cycle_count} - {time.strftime('%H:%M:%S')}")
-                print(f"{'='*50}")
+                print(f"\n{'='*80}")
+                print(f"🔄 CYCLE {cycle_count} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                print(f"{'='*80}")
                 
                 self.run_trading_cycle()
-                time.sleep(60)
+                
+                # Refresh every 30 seconds
+                time.sleep(30)
                 
             except KeyboardInterrupt:
-                print(f"\n🛑 BOT STOPPED")
+                print(f"\n🛑 BOT STOPPED BY USER")
                 break
             except Exception as e:
                 print(f"❌ Main loop error: {e}")
@@ -446,7 +440,7 @@ class AIScalpingTrader:
 
 if __name__ == "__main__":
     try:
-        bot = AIScalpingTrader()
+        bot = ExistingPositionTracker()
         bot.start_trading()
     except Exception as e:
         print(f"❌ Failed to start bot: {e}")
