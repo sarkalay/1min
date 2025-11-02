@@ -502,6 +502,7 @@ class MultiPairScalpingTrader:
         - Oversold conditions (if RSI low)
         - Support bounce potential
         - Bullish divergence
+        - High buying volume at support
         
         BEARISH/SHORT SIGNALS:
         - Price near 1H resistance: ${data.get('high_1h', price):.2f}  
@@ -509,9 +510,16 @@ class MultiPairScalpingTrader:
         - Overbought conditions (if RSI high)
         - Resistance rejection potential
         - Bearish divergence
+        - High selling volume at resistance
         
-        IMPORTANT: Be completely neutral. If signals are balanced, prefer LONG for upward bias.
-        Current market is mixed. Look for the STRONGER setup regardless of direction.
+        **IMPORTANT: BE COMPLETELY NEUTRAL**
+        - No LONG bias - analyze both sides equally
+        - Choose the STRONGER setup regardless of direction
+        - If signals are balanced, prefer SHORT for counter-trend
+        - Confidence should be 60%+ for clear setups
+        **CURRENT BIAS CHECK:**
+        - Resistance distance: {((data.get('high_1h', price) - price) / price * 100):.2f}%
+        - Support distance: {((price - data.get('low_1h', price)) / price * 100):.2f}%
         
         RESPONSE (JSON only):
         {{
@@ -522,10 +530,11 @@ class MultiPairScalpingTrader:
             "stop_loss": number,
             "take_profit": number,
             "position_size_usd": 50,
-            "confidence": 0-100,
+            "confidence": 60-80,
             "timeframe": "5-30min",
             "reason": "BALANCED analysis - explain both bull/bear cases and why chosen direction is stronger",
             "urgency": "high/medium/low"
+            "bias_check": "balanced/slightly_bullish/slightly_bearish
         }}
         """
         
