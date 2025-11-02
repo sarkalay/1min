@@ -466,53 +466,56 @@ class MultiPairScalpingTrader:
         return market_data
     
     def get_scalping_decision(self, market_data):
-        """Scalping-optimized AI decision for both LONG and SHORT"""
-        pair = list(market_data.keys())[0]
-        data = market_data[pair]
-        price = data['price']
-        
-        prompt = f"""
-        URGENT SCALPING ANALYSIS FOR {pair} (ALTCOIN):
-        
-        CURRENT MARKET DATA:
-        - Price: ${price}
-        - 1H Change: {data.get('change_1h', 0):.2f}%
-        - 4H Change: {data.get('change_4h', 0):.2f}%
-        - Volume Ratio: {data.get('volume_ratio', 1):.2f}x
-        - Volatility: {data.get('volatility', 0):.2f}%
-        - 1H Range: ${data.get('low_1h', price):.2f} - ${data.get('high_1h', price):.2f}
-        
-        SCALPING STRATEGY - BOTH LONG & SHORT:
-        LONG opportunities:
-        - Price near support levels ({data.get('low_1h', price):.2f})
-        - Oversold conditions (recent dip)
-        - Positive momentum reversal
-        - High volume buying
-        
-        SHORT opportunities:  
-        - Price near resistance levels ({data.get('high_1h', price):.2f})
-        - Overbought conditions (recent pump)
-        - Negative momentum reversal  
-        - High volume selling
-        
-        Analyze for IMMEDIATE scalping entry within next 1-5 candles.
-        Recommend SHORT if bearish signals are stronger than bullish.
-        
-        RESPONSE (JSON only):
-        {{
-            "action": "TRADE/SKIP",
-            "pair": "{pair}",
-            "direction": "LONG/SHORT",
-            "entry_price": {price},
-            "stop_loss": number,
-            "take_profit": number,
-            "position_size_usd": {self.trade_size_usd},
-            "confidence": 0-100,
-            "timeframe": "5-30min",
-            "reason": "Specific LONG/SHORT technical reason...",
-            "urgency": "high/medium/low"
-        }}
-        """
+    """BALANCED AI decision for both LONG and SHORT"""
+    pair = list(market_data.keys())[0]
+    data = market_data[pair]
+    price = data['price']
+    
+    prompt = f"""
+    BALANCED SCALPING ANALYSIS FOR {pair}:
+    
+    CURRENT MARKET DATA:
+    - Price: ${price}
+    - 1H Change: {data.get('change_1h', 0):.2f}%
+    - 4H Change: {data.get('change_4h', 0):.2f}%
+    - Volume Ratio: {data.get('volume_ratio', 1):.2f}x
+    - Volatility: {data.get('volatility', 0):.2f}%
+    - 1H Range: ${data.get('low_1h', price):.2f} - ${data.get('high_1h', price):.2f}
+    
+    NEUTRAL ANALYSIS - CONSIDER BOTH SIDES EQUALLY:
+    
+    BULLISH/LONG SIGNALS:
+    - Price near 1H support: ${data.get('low_1h', price):.2f}
+    - Positive momentum reversal patterns
+    - Oversold conditions (if RSI low)
+    - Support bounce potential
+    - Bullish divergence
+    
+    BEARISH/SHORT SIGNALS:
+    - Price near 1H resistance: ${data.get('high_1h', price):.2f}  
+    - Negative momentum reversal patterns
+    - Overbought conditions (if RSI high)
+    - Resistance rejection potential
+    - Bearish divergence
+    
+    IMPORTANT: Be completely neutral. If signals are balanced, prefer LONG for upward bias.
+    Current market is mixed. Look for the STRONGER setup regardless of direction.
+    
+    RESPONSE (JSON only):
+    {{
+        "action": "TRADE/SKIP",
+        "pair": "{pair}",
+        "direction": "LONG/SHORT",
+        "entry_price": {price},
+        "stop_loss": number,
+        "take_profit": number,
+        "position_size_usd": 50,
+        "confidence": 0-100,
+        "timeframe": "5-30min",
+        "reason": "BALANCED analysis - explain both bull/bear cases and why chosen direction is stronger",
+        "urgency": "high/medium/low"
+    }}
+    """
         
         try:
             headers = {
