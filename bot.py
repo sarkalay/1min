@@ -28,15 +28,14 @@ class MultiPairScalpingTrader:
         self.max_concurrent_trades = 2
         self.available_pairs = []
         self.active_trades = {}
-        self.blacklisted_pairs = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
+        self.blacklisted_pairs = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT"]
         
         # Precision settings
         self.quantity_precision = {}
         self.price_precision = {}
         
         # Pair-specific settings
-        self.pair_settings = {
-            "ADAUSDT": {"min_qty": 1, "price_precision": 4},
+        self.pair_settings = {            
             "DOGEUSDT": {"min_qty": 1, "price_precision": 5},
             "XRPUSDT": {"min_qty": 1, "price_precision": 4},
             "SOLUSDT": {"min_qty": 0.1, "price_precision": 2},
@@ -142,7 +141,7 @@ class MultiPairScalpingTrader:
     
     def setup_futures(self):
         try:
-            initial_pairs = ["SOLUSDT", "ADAUSDT", "XRPUSDT", "AVAXUSDT", "MATICUSDT", "LINKUSDT", "DOTUSDT", "DOGEUSDT"]
+            initial_pairs = ["SOLUSDT", "XRPUSDT", "AVAXUSDT", "MATICUSDT", "LINKUSDT", "DOTUSDT", "DOGEUSDT"]
             for pair in initial_pairs:
                 try:
                     self.binance.futures_change_leverage(symbol=pair, leverage=self.leverage)
@@ -160,11 +159,11 @@ class MultiPairScalpingTrader:
         BINANCE FUTURES SCALPING PAIR RECOMMENDATIONS (EXCLUDE BTCUSDT, ETHUSDT, BNBUSDT):
         Recommend 6-10 best altcoin pairs for scalping from Binance futures.
         EXCLUDE BTC, ETH, BNB completely.
-        Focus on SOL, ADA, XRP, AVAX, MATIC, LINK, DOT, DOGE, etc.
+        Focus on SOL, XRP, AVAX, MATIC, LINK, DOT, DOGE, etc.
         
         RESPONSE (JSON only):
         {
-            "recommended_pairs": ["SOLUSDT", "ADAUSDT", "XRPUSDT", "AVAXUSDT", ...],
+            "recommended_pairs": ["SOLUSDT", "XRPUSDT", "AVAXUSDT", ...],
             "reason": "These altcoin pairs have good liquidity and volatility for scalping"
         }
         """
@@ -188,7 +187,7 @@ class MultiPairScalpingTrader:
         except Exception as e:
             print(f"❌ AI pair selection error: {e}")
         
-        fallback_pairs = ["SOLUSDT", "ADAUSDT", "XRPUSDT", "AVAXUSDT", "MATICUSDT", "LINKUSDT", "DOTUSDT", "DOGEUSDT"]
+        fallback_pairs = ["SOLUSDT", "XRPUSDT", "AVAXUSDT", "MATICUSDT", "LINKUSDT", "DOTUSDT", "DOGEUSDT"]
         print(f"🔄 Using fallback pairs: {fallback_pairs}")
         return fallback_pairs
     
