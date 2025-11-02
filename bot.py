@@ -821,7 +821,7 @@ class MultiPairScalpingTrader:
             print(f"📊 Remaining Active Trades: {list(self.active_trades.keys())}")
 
     def run_scalping_cycle(self):
-        """FIXED scalping cycle with proper execution"""
+        """FIXED scalping cycle with PROPER TRADE LIMIT ENFORCEMENT"""
         try:
             # Auto rotate pairs if needed
             self.auto_rotate_pairs()
@@ -840,10 +840,20 @@ class MultiPairScalpingTrader:
             if self.active_trades:
                 print(f"   Trading: {list(self.active_trades.keys())}")
             
+            # Check if we already have maximum trades
+            if len(self.active_trades) >= self.max_concurrent_trades:
+                print(f"⏸️  Maximum trades reached ({self.max_concurrent_trades}), skipping analysis")
+                self.check_scalping_trades()
+                return
+            
             # Get AI decisions
             trade_opportunities = []
             
             for pair in self.available_pairs:
+                # Skip if already have max trades
+                if len(self.active_trades) >= self.max_concurrent_trades:
+                    break
+                    
                 if pair in self.active_trades:
                     continue
                     
@@ -856,13 +866,20 @@ class MultiPairScalpingTrader:
                         trade_opportunities.append((decision, decision["confidence"]))
                         print(f"✅ QUALIFIED: {pair} - {decision['confidence']}% confidence")
             
-            # Sort by confidence and execute
+            # Sort by confidence and execute TOP N only
             trade_opportunities.sort(key=lambda x: x[1], reverse=True)
-            print(f"🎯 Trade Opportunities: {len(trade_opportunities)}")
+            
+            # TAKE ONLY THE NUMBER WE NEED (max - current)
+            available_slots = self.max_concurrent_trades - len(self.active_trades)
+            trade_opportunities = trade_opportunities[:available_slots]
+            
+            print(f"🎯 Trade Opportunities: {len(trade_opportunities)} (Available slots: {available_slots})")
             
             executed_count = 0
             for decision, confidence in trade_opportunities:
+                # Double check we still have available slots
                 if len(self.active_trades) >= self.max_concurrent_trades:
+                    print(f"🛑 Trade limit reached during execution")
                     break
                     
                 print(f"🚀 ATTEMPTING EXECUTION: {decision['pair']} {decision['direction']}")
