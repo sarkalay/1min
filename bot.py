@@ -8,8 +8,12 @@ import numpy as np
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from dotenv import load_dotenv
+from datetime import datetime
+import pytz
 
-# Install colorama first: pip install colorama
+# Install required packages first: 
+# pip install colorama python-binance python-dotenv numpy pytz
+
 try:
     from colorama import init, Fore, Back, Style
     init(autoreset=True)
@@ -28,6 +32,9 @@ class RealOrderPositionTracker:
         self.binance_secret = os.getenv('BINANCE_SECRET_KEY')
         self.deepseek_key = os.getenv('DEEPSEEK_API_KEY')
         
+        # Thailand timezone
+        self.thailand_tz = pytz.timezone('Asia/Bangkok')
+        
         # SCALPING parameters
         self.trade_size_usd = 50
         self.leverage = 5
@@ -40,6 +47,10 @@ class RealOrderPositionTracker:
         self.bot_opened_trades = {}
         self.existing_positions = {}
         
+        # Trade history
+        self.trade_history_file = "trade_history.json"
+        self.trade_history = self.load_trade_history()
+        
         # Precision settings
         self.quantity_precision = {}
         self.price_precision = {}
@@ -51,10 +62,76 @@ class RealOrderPositionTracker:
         self.print_color(f"💵 Trade Size: ${self.trade_size_usd}", Fore.GREEN)
         self.print_color(f"📈 Max Trades: {self.max_concurrent_trades}", Fore.YELLOW)
         self.print_color(f"🧠 Using DeepSeek AI for Trading Decisions", Fore.MAGENTA)
+        self.print_color(f"🇹🇭 Timezone: Thailand (Asia/Bangkok)", Fore.BLUE)
+        self.print_color(f"📊 Trade History: {self.trade_history_file}", Fore.CYAN)
         
         self.validate_config()
         self.setup_futures()
         self.load_symbol_precision()
+    
+    def load_trade_history(self):
+        """Load trade history from JSON file"""
+        try:
+            if os.path.exists(self.trade_history_file):
+                with open(self.trade_history_file, 'r') as f:
+                    return json.load(f)
+            return []
+        except Exception as e:
+            self.print_color(f"❌ Error loading trade history: {e}", Fore.RED)
+            return []
+    
+    def save_trade_history(self):
+        """Save trade history to JSON file"""
+        try:
+            with open(self.trade_history_file, 'w') as f:
+                json.dump(self.trade_history, f, indent=2)
+        except Exception as e:
+            self.print_color(f"❌ Error saving trade history: {e}", Fore.RED)
+    
+    def add_trade_to_history(self, trade_data):
+        """Add completed trade to history"""
+        try:
+            trade_data['close_time'] = self.get_thailand_time()
+            trade_data['close_timestamp'] = time.time()
+            self.trade_history.append(trade_data)
+            
+            # Keep only last 100 trades
+            if len(self.trade_history) > 100:
+                self.trade_history = self.trade_history[-100:]
+            
+            self.save_trade_history()
+            self.print_color(f"📝 Trade saved to history: {trade_data['pair']} {trade_data['direction']}", Fore.CYAN)
+        except Exception as e:
+            self.print_color(f"❌ Error adding trade to history: {e}", Fore.RED)
+    
+    def show_trade_history(self, limit=10):
+        """Display recent trade history"""
+        if not self.trade_history:
+            self.print_color("📊 No trade history found", Fore.YELLOW)
+            return
+        
+        self.print_color(f"\n📊 TRADE HISTORY (Last {min(limit, len(self.trade_history))} trades)", Fore.CYAN)
+        self.print_color("=" * 80, Fore.CYAN)
+        
+        for i, trade in enumerate(reversed(self.trade_history[-limit:])):
+            pnl = trade.get('pnl', 0)
+            pnl_color = Fore.GREEN if pnl > 0 else Fore.RED if pnl < 0 else Fore.YELLOW
+            status_color = Fore.GREEN if trade.get('status') == 'CLOSED' else Fore.RED
+            
+            self.print_color(f"{i+1}. {trade['pair']} {trade['direction']} | "
+                           f"Entry: ${trade.get('entry_price', 0):.4f} | "
+                           f"Exit: ${trade.get('exit_price', 0):.4f} | "
+                           f"P&L: ${pnl:.2f}", pnl_color)
+            self.print_color(f"   TP: ${trade.get('take_profit', 0):.4f} | "
+                           f"SL: ${trade.get('stop_loss', 0):.4f} | "
+                           f"Status: {trade.get('status', 'UNKNOWN')} | "
+                           f"Time: {trade.get('close_time', 'N/A')}", status_color)
+    
+    def get_thailand_time(self):
+        """Get current Thailand time"""
+        now_utc = datetime.now(pytz.utc)
+        thailand_time = now_utc.astimezone(self.thailand_tz)
+        return thailand_time.strftime('%Y-%m-%d %H:%M:%S')
     
     def print_color(self, text, color=Fore.WHITE, style=Style.NORMAL):
         """Colorful print function"""
@@ -112,31 +189,37 @@ class RealOrderPositionTracker:
             self.print_color(f"❌ Error loading symbol precision: {e}", Fore.RED)
     
     def format_price(self, pair, price):
-        precision = self.price_precision.get(pair, 4)
+        precision = self.price_precision.get(pair, 3)
         return round(price, precision)
     
     def get_quantity(self, pair, price):
         """Calculate proper quantity for $50 position"""
         try:
-            # Binance FUTURES minimum quantities
-            min_quantities = {
-                "SOLUSDT": 0.01,
-                "AVAXUSDT": 0.1, 
-                "XRPUSDT": 1.0,
-                "LINKUSDT": 0.1,
-                "DOTUSDT": 0.1
+            # Simple fixed quantity approach based on pair
+            fixed_quantities = {
+                "SOLUSDT": 0.3,    # ~$50 at current price
+                "AVAXUSDT": 2.0,   # ~$50
+                "XRPUSDT": 80.0,   # ~$50  
+                "LINKUSDT": 3.0,   # ~$50
+                "DOTUSDT": 4.0     # ~$50
             }
             
-            min_qty = min_quantities.get(pair, 0.1)
+            quantity = fixed_quantities.get(pair)
+            
+            if quantity is None or quantity <= 0:
+                # Fallback calculation
+                quantity = round(self.trade_size_usd / price, 2)
+                quantity = max(quantity, 0.01)  # Minimum safety
+                
+            # Apply precision
             precision = self.quantity_precision.get(pair, 3)
-            
-            # Calculate required quantity for $50
-            required_quantity = self.trade_size_usd / price
-            
-            # Use the larger of required quantity or minimum
-            quantity = max(required_quantity, min_qty)
             quantity = round(quantity, precision)
             
+            # Final validation
+            if quantity <= 0:
+                self.print_color(f"❌ Invalid quantity: {quantity} for {pair}", Fore.RED)
+                return None
+                
             actual_value = quantity * price
             
             self.print_color(f"📦 Quantity for {pair}: {quantity} = ${actual_value:.2f}", Fore.CYAN)
@@ -352,7 +435,8 @@ class RealOrderPositionTracker:
             
             direction_color = Fore.BLUE if direction == 'LONG' else Fore.RED
             self.print_color(f"🎯 EXECUTING: {pair} {direction}", direction_color)
-            self.print_color(f"   Size: {quantity} | TP: ${take_profit} | SL: ${stop_loss}", Fore.WHITE)
+            self.print_color(f"   Size: {quantity} | Entry: ${current_price:.4f}", Fore.WHITE)
+            self.print_color(f"   TP: ${take_profit:.4f} | SL: ${stop_loss:.4f}", Fore.YELLOW)
             
             # Step 1: Open position
             try:
@@ -407,7 +491,8 @@ class RealOrderPositionTracker:
                     "take_profit": take_profit,
                     "entry_time": time.time(),
                     "status": 'ACTIVE',
-                    'ai_confidence': confidence
+                    'ai_confidence': confidence,
+                    'entry_time_th': self.get_thailand_time()
                 }
                 
                 self.print_color(f"🚀 TRADE ACTIVATED: {pair} {direction}", Fore.GREEN)
@@ -425,7 +510,7 @@ class RealOrderPositionTracker:
             return False
 
     def monitor_positions(self):
-        """Monitor active positions"""
+        """Monitor active positions and track closed trades"""
         try:
             for pair, trade in list(self.bot_opened_trades.items()):
                 if trade['status'] == 'ACTIVE':
@@ -433,13 +518,26 @@ class RealOrderPositionTracker:
                     position_info = self.get_live_position_data(pair)
                     
                     if position_info is None:
-                        # Position closed
+                        # Position closed - calculate P&L
                         self.print_color(f"✅ Position closed: {pair}", Fore.GREEN)
-                        trade['status'] = 'CLOSED'
                         
-                        # Clean up after some time
-                        if time.time() - trade['entry_time'] > 300:
-                            del self.bot_opened_trades[pair]
+                        # Get current price for exit price
+                        current_price = self.get_current_price(pair)
+                        if current_price:
+                            # Calculate P&L
+                            if trade['direction'] == 'LONG':
+                                pnl = (current_price - trade['entry_price']) * trade['quantity']
+                            else:  # SHORT
+                                pnl = (trade['entry_price'] - current_price) * trade['quantity']
+                            
+                            # Add to trade history
+                            closed_trade = trade.copy()
+                            closed_trade['exit_price'] = current_price
+                            closed_trade['pnl'] = pnl
+                            closed_trade['status'] = 'CLOSED'
+                            self.add_trade_to_history(closed_trade)
+                        
+                        trade['status'] = 'CLOSED'
                     
         except Exception as e:
             self.print_color(f"❌ Monitoring error: {e}", Fore.RED)
@@ -528,9 +626,9 @@ class RealOrderPositionTracker:
             return None
     
     def display_dashboard(self):
-        """Display trading dashboard"""
-        self.print_color(f"\n📊 DASHBOARD - {time.strftime('%H:%M:%S')}", Fore.CYAN)
-        self.print_color("=" * 60, Fore.CYAN)
+        """Display trading dashboard with TP/SL information"""
+        self.print_color(f"\n📊 DASHBOARD - {self.get_thailand_time()}", Fore.CYAN)
+        self.print_color("=" * 80, Fore.CYAN)
         
         # Update positions
         for pair in list(self.existing_positions.keys()):
@@ -551,14 +649,16 @@ class RealOrderPositionTracker:
             self.print_color("🔄 No active positions", Fore.YELLOW)
             return
         
-        # Display positions
+        # Display existing positions (manual trades)
         for pair, position in self.existing_positions.items():
             pnl_color = Fore.GREEN if position['unrealized_pnl'] >= 0 else Fore.RED
             direction_color = Fore.BLUE if position['direction'] == 'LONG' else Fore.RED
             
             self.print_color(f"{position['direction']} {pair}", direction_color)
-            self.print_color(f"   Size: {position['quantity']} | P&L: ${position['unrealized_pnl']:.2f}", pnl_color)
+            self.print_color(f"   Size: {position['quantity']} | Entry: ${position['entry_price']:.4f}", Fore.WHITE)
+            self.print_color(f"   Current: ${position['current_price']:.4f} | P&L: ${position['unrealized_pnl']:.2f}", pnl_color)
         
+        # Display bot-opened positions
         for pair, trade in self.bot_opened_trades.items():
             if trade['status'] == 'ACTIVE':
                 live_data = self.get_live_position_data(pair)
@@ -567,7 +667,9 @@ class RealOrderPositionTracker:
                     direction_color = Fore.BLUE if trade['direction'] == 'LONG' else Fore.RED
                     
                     self.print_color(f"{trade['direction']} {pair} 🤖", direction_color)
-                    self.print_color(f"   Size: {trade['quantity']} | P&L: ${live_data['unrealized_pnl']:.2f}", pnl_color)
+                    self.print_color(f"   Size: {trade['quantity']} | Entry: ${trade['entry_price']:.4f}", Fore.WHITE)
+                    self.print_color(f"   Current: ${live_data['current_price']:.4f} | P&L: ${live_data['unrealized_pnl']:.2f}", pnl_color)
+                    self.print_color(f"   TP: ${trade['take_profit']:.4f} | SL: ${trade['stop_loss']:.4f}", Fore.YELLOW)
     
     def can_open_new_trade(self, pair):
         """Check if we can open new trade"""
@@ -617,6 +719,10 @@ class RealOrderPositionTracker:
             # Display dashboard
             self.display_dashboard()
             
+            # Show recent trade history every 5 cycles
+            if hasattr(self, 'cycle_count') and self.cycle_count % 5 == 0:
+                self.show_trade_history(5)
+            
             # Check if we can open new trades
             active_bot_trades = len([t for t in self.bot_opened_trades.values() if t['status'] == 'ACTIVE'])
             total_positions = len(self.existing_positions) + active_bot_trades
@@ -649,12 +755,12 @@ class RealOrderPositionTracker:
         """Main trading loop"""
         self.print_color("🚀 STARTING TRADING BOT!", Fore.CYAN)
         
-        cycle_count = 0
+        self.cycle_count = 0
         
         while True:
             try:
-                cycle_count += 1
-                self.print_color(f"\n🔄 CYCLE {cycle_count}", Fore.CYAN)
+                self.cycle_count += 1
+                self.print_color(f"\n🔄 CYCLE {self.cycle_count}", Fore.CYAN)
                 self.print_color("=" * 50, Fore.CYAN)
                 
                 self.run_trading_cycle()
@@ -664,6 +770,7 @@ class RealOrderPositionTracker:
                 
             except KeyboardInterrupt:
                 self.print_color(f"\n🛑 BOT STOPPED", Fore.RED)
+                self.show_trade_history(10)  # Show history when stopping
                 break
             except Exception as e:
                 self.print_color(f"❌ Main loop error: {e}", Fore.RED)
