@@ -51,6 +51,7 @@ class RealOrderPositionTracker:
         self.print_color(f"💵 Trade Size: ${self.trade_size_usd}", Fore.GREEN)
         self.print_color(f"📈 Max Trades: {self.max_concurrent_trades}", Fore.YELLOW)
         self.print_color(f"🎯 Using OCO Orders for TP/SL", Fore.CYAN)
+        self.print_color(f"🧠 Using DeepSeek AI for Trading Decisions", Fore.MAGENTA)
         
         self.validate_config()
         self.setup_futures()
@@ -165,6 +166,215 @@ class RealOrderPositionTracker:
             self.print_color(f"❌ Quantity calculation failed: {e}", Fore.RED)
             return None
 
+    def get_technical_analysis(self, pair, price_data):
+        """Simple technical analysis for the trading pair"""
+        try:
+            prices = price_data['prices']
+            if len(prices) < 10:
+                return "NEUTRAL", 50
+                
+            # Calculate simple moving averages
+            sma_5 = np.mean(prices[-5:])
+            sma_10 = np.mean(prices[-10:])
+            
+            # Calculate RSI (simplified)
+            gains = []
+            losses = []
+            for i in range(1, len(prices)):
+                change = prices[i] - prices[i-1]
+                if change > 0:
+                    gains.append(change)
+                else:
+                    losses.append(abs(change))
+            
+            avg_gain = np.mean(gains) if gains else 0
+            avg_loss = np.mean(losses) if losses else 0
+            
+            if avg_loss == 0:
+                rsi = 100
+            else:
+                rs = avg_gain / avg_loss
+                rsi = 100 - (100 / (1 + rs))
+            
+            # Generate signal
+            if sma_5 > sma_10 and rsi < 70:
+                return "LONG", min(80, 50 + (rsi - 30))
+            elif sma_5 < sma_10 and rsi > 30:
+                return "SHORT", min(80, 50 + (70 - rsi))
+            else:
+                return "NEUTRAL", 40
+                
+        except Exception as e:
+            self.print_color(f"❌ Technical analysis failed: {e}", Fore.RED)
+            return "NEUTRAL", 50
+
+    def get_deepseek_analysis(self, pair, market_data):
+        """Get AI analysis from DeepSeek API"""
+        try:
+            if not self.deepseek_key:
+                self.print_color("⚠️ DeepSeek API key not found, using technical analysis", Fore.YELLOW)
+                return self.get_technical_analysis(pair, market_data)
+            
+            # Prepare market data for AI
+            current_price = market_data['current_price']
+            price_history = market_data.get('prices', [current_price] * 10)
+            
+            prompt = f"""
+            Analyze this cryptocurrency trading data and provide a clear trading decision:
+            
+            Pair: {pair}
+            Current Price: ${current_price:.4f}
+            Price Trend: Last 10 prices - {[f'${p:.4f}' for p in price_history[-10:]]}
+            
+            Trading Parameters:
+            - Trade Size: ${self.trade_size_usd}
+            - Leverage: {self.leverage}x
+            - Take Profit: 0.8%
+            - Stop Loss: 0.5%
+            
+            Please analyze the short-term trend and provide:
+            1. CLEAR direction (LONG or SHORT or HOLD)
+            2. Confidence level (0-100)
+            3. Brief reason
+            
+            Respond in this exact JSON format:
+            {{"direction": "LONG|SHORT|HOLD", "confidence": 65, "reason": "brief explanation"}}
+            """
+            
+            headers = {
+                "Authorization": f"Bearer {self.deepseek_key}",
+                "Content-Type": "application/json"
+            }
+            
+            data = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a professional cryptocurrency trading analyst. Provide clear, concise trading decisions based on technical analysis and market data. Always respond with valid JSON."
+                    },
+                    {
+                        "role": "user", 
+                        "content": prompt
+                    }
+                ],
+                "temperature": 0.3,
+                "max_tokens": 500
+            }
+            
+            self.print_color(f"🧠 Consulting DeepSeek AI for {pair}...", Fore.MAGENTA)
+            
+            response = requests.post(
+                "https://api.deepseek.com/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                ai_response = result['choices'][0]['message']['content']
+                
+                # Parse JSON response
+                try:
+                    decision_data = json.loads(ai_response)
+                    direction = decision_data.get('direction', 'HOLD')
+                    confidence = decision_data.get('confidence', 50)
+                    reason = decision_data.get('reason', 'AI Analysis')
+                    
+                    self.print_color(f"✅ DeepSeek Analysis:", Fore.MAGENTA)
+                    self.print_color(f"   📊 Direction: {direction}", Fore.CYAN)
+                    self.print_color(f"   🎯 Confidence: {confidence}%", Fore.GREEN)
+                    self.print_color(f"   💡 Reason: {reason}", Fore.WHITE)
+                    
+                    return direction, confidence
+                    
+                except json.JSONDecodeError:
+                    self.print_color("❌ Failed to parse AI response, using technical analysis", Fore.RED)
+                    return self.get_technical_analysis(pair, market_data)
+                    
+            else:
+                self.print_color(f"❌ DeepSeek API error: {response.status_code}", Fore.RED)
+                return self.get_technical_analysis(pair, market_data)
+                
+        except Exception as e:
+            self.print_color(f"❌ DeepSeek analysis failed: {e}", Fore.RED)
+            return self.get_technical_analysis(pair, market_data)
+
+    def get_price_history(self, pair, limit=20):
+        """Get recent price history for analysis"""
+        try:
+            klines = self.binance.futures_klines(
+                symbol=pair,
+                interval=Client.KLINE_INTERVAL_1MINUTE,
+                limit=limit
+            )
+            
+            prices = [float(k[4]) for k in klines]  # Closing prices
+            return {
+                'prices': prices,
+                'current_price': prices[-1] if prices else 0
+            }
+        except Exception as e:
+            self.print_color(f"❌ Error getting price history for {pair}: {e}", Fore.RED)
+            # Return current price only as fallback
+            try:
+                ticker = self.binance.futures_symbol_ticker(symbol=pair)
+                current_price = float(ticker['price'])
+                return {
+                    'prices': [current_price] * 10,
+                    'current_price': current_price
+                }
+            except:
+                return {'prices': [0], 'current_price': 0}
+
+    def get_ai_decision(self, pair_data):
+        """Get AI-powered trading decision"""
+        try:
+            pair = list(pair_data.keys())[0]
+            current_price = pair_data[pair]['price']
+            
+            self.print_color(f"🔍 Analyzing {pair} for trading opportunities...", Fore.BLUE)
+            
+            # Get price history for analysis
+            market_data = self.get_price_history(pair)
+            market_data['current_price'] = current_price
+            
+            # Get AI analysis (DeepSeek or technical)
+            direction, confidence = self.get_deepseek_analysis(pair, market_data)
+            
+            if direction == "HOLD" or confidence < 60:
+                self.print_color(f"🎯 AI Decision: HOLD (Confidence: {confidence}%)", Fore.YELLOW)
+                return {
+                    "action": "HOLD", 
+                    "pair": pair,
+                    "direction": direction,
+                    "confidence": confidence,
+                    "reason": f"Low confidence: {confidence}%"
+                }
+            else:
+                self.print_color(f"🎯 AI Decision: {direction} (Confidence: {confidence}%)", Fore.GREEN)
+                return {
+                    "action": "TRADE",
+                    "pair": pair,
+                    "direction": direction,
+                    "confidence": confidence,
+                    "reason": "AI Analysis"
+                }
+                
+        except Exception as e:
+            self.print_color(f"❌ AI decision failed: {e}", Fore.RED)
+            # Fallback to random decision
+            import random
+            direction = "LONG" if random.random() > 0.5 else "SHORT"
+            return {
+                "action": "TRADE",
+                "pair": list(pair_data.keys())[0],
+                "direction": direction,
+                "confidence": 65,
+                "reason": "Fallback decision"
+            }
+
     def cleanup_old_orders(self, pair):
         """Clean up any existing orders for a pair"""
         try:
@@ -185,6 +395,7 @@ class RealOrderPositionTracker:
                 return False
             
             direction = decision["direction"]
+            confidence = decision["confidence"]
             
             # Clean up any existing orders first
             self.cleanup_old_orders(pair)
@@ -214,6 +425,7 @@ class RealOrderPositionTracker:
             direction_color = Fore.BLUE if direction == 'LONG' else Fore.RED
             self.print_color(f"🎯 EXECUTING OCO TRADE: {pair} {direction}", direction_color)
             self.print_color(f"   📦 Size: {quantity} | 🎯 TP: ${take_profit} | 🛑 SL: ${stop_loss}", Fore.WHITE)
+            self.print_color(f"   🧠 AI Confidence: {confidence}%", Fore.MAGENTA)
             
             # ✅ Step 1: Open position with MARKET order
             try:
@@ -277,7 +489,8 @@ class RealOrderPositionTracker:
                     "tp_order_id": tp_order['orderId'],
                     "entry_time": time.time(),
                     "source": "BOT",
-                    'status': 'ACTIVE'
+                    'status': 'ACTIVE',
+                    'ai_confidence': confidence
                 }
                 
                 self.print_color(f"🚀 OCO TRADE ACTIVATED: {pair} {direction}", Fore.GREEN)
@@ -442,7 +655,7 @@ class RealOrderPositionTracker:
                 del self.existing_positions[pair]
         
         # Update bot opened trades with live data
-        for pair in list(self.bot_opened_trades.keys()):
+        for pair in list(self.bot_opened_trades.items()):
             live_data = self.get_live_position_data(pair)
             if live_data:
                 self.bot_opened_trades[pair].update(live_data)
@@ -499,6 +712,7 @@ class RealOrderPositionTracker:
                     self.print_color(f"   💰 P&L: ${live_data['unrealized_pnl']:.2f} ({live_data['pnl_percent']:.2f}%)", pnl_color)
                     self.print_color(f"   ⚡ Leverage: {live_data['leverage']}x", Fore.CYAN)
                     self.print_color(f"   🎯 TP: ${trade['take_profit']} | 🛑 SL: ${trade['stop_loss']}", Fore.YELLOW)
+                    self.print_color(f"   🧠 AI Confidence: {trade.get('ai_confidence', 'N/A')}%", Fore.MAGENTA)
                     self.print_color(f"   🔒 OCO: Active (Auto-cleanup)", Fore.CYAN)
                     self.print_color(f"   ⏱️ Duration: {(time.time() - trade['entry_time']) / 60:.1f} minutes", Fore.WHITE)
                     self.print_color("-" * 30, Fore.GREEN)
@@ -558,28 +772,6 @@ class RealOrderPositionTracker:
                 
         return market_data
 
-    def get_ai_decision(self, market_data):
-        """AI decision making for available pairs only"""
-        if not market_data:
-            return {"action": "HOLD", "reason": "No available pairs"}
-            
-        pair = list(market_data.keys())[0]
-        data = market_data[pair]
-        current_price = data['price']
-        
-        import random
-        direction = "LONG" if random.random() > 0.5 else "SHORT"
-        
-        decision = {
-            "action": "TRADE",
-            "pair": pair,
-            "direction": direction,
-            "confidence": 65,
-            "reason": "AI Analysis"
-        }
-        
-        return decision
-
     def run_trading_cycle(self):
         """Main trading cycle"""
         try:
@@ -610,9 +802,14 @@ class RealOrderPositionTracker:
                             
                             if decision["action"] == "TRADE":
                                 self.print_color(f"✅ QUALIFIED: {pair}", Fore.GREEN)
-                                success = self.execute_oco_trade(decision)  # ✅ Use OCO trade function
+                                success = self.execute_oco_trade(decision)
                                 if success:
+                                    self.print_color(f"🎯 Trade executed successfully!", Fore.GREEN)
                                     break
+                            else:
+                                self.print_color(f"⏸️  AI suggests HOLD for {pair} (Confidence: {decision['confidence']}%)", Fore.YELLOW)
+                else:
+                    self.print_color(f"📊 No trading pairs available", Fore.BLUE)
             else:
                 self.print_color(f"🚫 Maximum positions reached ({total_positions}/{self.max_concurrent_trades}) - Skipping new trades", Fore.RED)
             
@@ -622,9 +819,6 @@ class RealOrderPositionTracker:
     def start_trading(self):
         self.print_color("🚀 STARTING REAL ORDER POSITION TRACKER WITH OCO!", Fore.CYAN, Style.BRIGHT)
         self.print_color("🔍 Scanning for existing positions in Binance...", Fore.CYAN)
-        
-        # Skip verification and go straight to trading
-        self.print_color("⏩ Skipping quantity verification...", Fore.YELLOW)
         
         self.scan_existing_positions()
         
