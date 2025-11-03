@@ -828,6 +828,8 @@ class RealOrderPositionTracker:
                                 if success:
                                     self.print_color(f"🎯 Trade executed successfully!", Fore.GREEN)
                                     break
+                                else:
+                                    self.print_color(f"❌ Trade execution failed for {pair}", Fore.RED)
                             else:
                                 self.print_color(f"⏸️  AI suggests HOLD for {pair} (Confidence: {decision['confidence']}%)", Fore.YELLOW)
                                 self.print_color(f"   💡 Reason: {decision['reason']}", Fore.WHITE)
