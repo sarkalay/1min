@@ -427,6 +427,7 @@ class RealOrderPositionTracker:
             # Calculate quantity - ✅ CORRECTED VERSION
             quantity = self.get_quantity(pair, current_price)
             if quantity is None:
+                self.print_color(f"❌ Quantity calculation failed for {pair}", Fore.RED)
                 return False
             
             # Calculate TP/SL with better risk management
