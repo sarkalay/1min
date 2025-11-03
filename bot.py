@@ -395,17 +395,23 @@ class RealOrderPositionTracker:
             }
 
     def cleanup_old_orders(self, pair):
-        """Clean up any existing orders for a pair"""
+        """Clean up any existing orders for a pair - ONLY when position is closed"""
         try:
-            self.binance.futures_cancel_all_open_orders(symbol=pair)
-            self.print_color(f"🧹 Cleaned up old orders for {pair}", Fore.YELLOW)
-            return True
+            # Check if position still exists before cleaning
+            position_info = self.get_live_position_data(pair)
+            if position_info is None:
+                self.binance.futures_cancel_all_open_orders(symbol=pair)
+                self.print_color(f"🧹 Cleaned up old orders for {pair}", Fore.YELLOW)
+                return True
+            else:
+                self.print_color(f"⚠️ Position still active for {pair}, skipping cleanup", Fore.YELLOW)
+                return False
         except Exception as e:
             self.print_color(f"⚠️ No orders to clean for {pair}: {e}", Fore.YELLOW)
             return True
-    
+
     def execute_oco_trade(self, decision):
-        """✅ OCO Order System - TP/SL တစ်ခုထိရင် အခြားတစ်ခု အလိုလို cancel"""
+        """✅ OCO Order System - NO cleanup before trade"""
         try:
             pair = decision["pair"]
             
@@ -417,20 +423,19 @@ class RealOrderPositionTracker:
             confidence = decision["confidence"]
             reason = decision["reason"]
             
-            # Clean up any existing orders first
-            self.cleanup_old_orders(pair)
+            # ✅ NO cleanup before trade - only cleanup after position closes
             
             # Get current price
             ticker = self.binance.futures_symbol_ticker(symbol=pair)
             current_price = float(ticker['price'])
             
-            # Calculate quantity - ✅ CORRECTED VERSION
+            # Calculate quantity
             quantity = self.get_quantity(pair, current_price)
             if quantity is None:
                 self.print_color(f"❌ Quantity calculation failed for {pair}", Fore.RED)
                 return False
             
-            # Calculate TP/SL with better risk management
+            # Calculate TP/SL
             if direction == "LONG":
                 stop_loss = current_price * 0.995   # 0.5% SL
                 take_profit = current_price * 1.008 # 0.8% TP
@@ -444,15 +449,13 @@ class RealOrderPositionTracker:
             take_profit = self.format_price(pair, take_profit)
             
             direction_color = Fore.BLUE if direction == 'LONG' else Fore.RED
-            self.print_color(f"🎯 EXECUTING OCO TRADE: {pair} {direction}", direction_color)
+            self.print_color(f"🎯 EXECUTING TRADE: {pair} {direction}", direction_color)
             self.print_color(f"   📦 Size: {quantity} | 🎯 TP: ${take_profit} | 🛑 SL: ${stop_loss}", Fore.WHITE)
             self.print_color(f"   🧠 AI Confidence: {confidence}%", Fore.MAGENTA)
             self.print_color(f"   💡 AI Reason: {reason}", Fore.WHITE)
             
             # ✅ Step 1: Open position with MARKET order
             try:
-                self.print_color(f"🔧 DEBUG: Attempting to open {direction} position for {pair}...", Fore.YELLOW)
-                
                 if direction == "LONG":
                     order = self.binance.futures_create_order(
                         symbol=pair,
@@ -461,7 +464,6 @@ class RealOrderPositionTracker:
                         quantity=quantity
                     )
                     self.print_color(f"✅ REAL LONG ORDER EXECUTED: {quantity} {pair} @ ${current_price}", Fore.GREEN)
-                    self.print_color(f"🔧 DEBUG: Long order response: {order}", Fore.YELLOW)
                 else:
                     order = self.binance.futures_create_order(
                         symbol=pair,
@@ -470,14 +472,13 @@ class RealOrderPositionTracker:
                         quantity=quantity
                     )
                     self.print_color(f"✅ REAL SHORT ORDER EXECUTED: {quantity} {pair} @ ${current_price}", Fore.GREEN)
-                    self.print_color(f"🔧 DEBUG: Short order response: {order}", Fore.YELLOW)
                 
                 # ✅ Step 2: Wait for position to open
                 self.print_color(f"⏳ Waiting for position to open...", Fore.BLUE)
                 time.sleep(3)
                 
-                # ✅ Step 3: Place OCO ORDER using STOP_MARKET and TAKE_PROFIT_MARKET
-                self.print_color(f"🔧 DEBUG: Placing TP/SL orders...", Fore.YELLOW)
+                # ✅ Step 3: Place STOP LOSS and TAKE PROFIT orders
+                self.print_color(f"🔧 Placing TP/SL orders...", Fore.YELLOW)
                 
                 # Place STOP LOSS order
                 sl_order = self.binance.futures_create_order(
@@ -489,7 +490,6 @@ class RealOrderPositionTracker:
                     reduceOnly=True,
                     timeInForce='GTC'
                 )
-                self.print_color(f"🔧 DEBUG: SL order response: {sl_order}", Fore.YELLOW)
                 
                 # Place TAKE PROFIT order  
                 tp_order = self.binance.futures_create_order(
@@ -501,13 +501,12 @@ class RealOrderPositionTracker:
                     reduceOnly=True,
                     timeInForce='GTC'
                 )
-                self.print_color(f"🔧 DEBUG: TP order response: {tp_order}", Fore.YELLOW)
                 
-                self.print_color(f"✅ OCO ORDERS PLACED - TP/SL activated!", Fore.GREEN)
+                self.print_color(f"✅ TP/SL ORDERS PLACED!", Fore.GREEN)
                 self.print_color(f"   🛑 SL Order ID: {sl_order['orderId']}", Fore.YELLOW)
                 self.print_color(f"   🎯 TP Order ID: {tp_order['orderId']}", Fore.YELLOW)
                 
-                # Store trade info with both order IDs
+                # Store trade info
                 self.bot_opened_trades[pair] = {
                     "pair": pair,
                     "direction": direction,
@@ -524,28 +523,22 @@ class RealOrderPositionTracker:
                     'ai_reason': reason
                 }
                 
-                self.print_color(f"🚀 OCO TRADE ACTIVATED: {pair} {direction}", Fore.GREEN)
+                self.print_color(f"🚀 TRADE ACTIVATED: {pair} {direction}", Fore.GREEN)
                 return True
                 
             except BinanceAPIException as e:
                 self.print_color(f"❌ Binance API Error: {e}", Fore.RED)
-                self.print_color(f"🔧 DEBUG: API Error details - {e}", Fore.RED)
-                # Clean up on error
-                self.cleanup_old_orders(pair)
                 return False
             except Exception as e:
                 self.print_color(f"❌ Order execution failed: {e}", Fore.RED)
-                self.print_color(f"🔧 DEBUG: General Error details - {e}", Fore.RED)
-                self.cleanup_old_orders(pair)
                 return False
             
         except Exception as e:
             self.print_color(f"❌ Trade execution failed: {e}", Fore.RED)
-            self.print_color(f"🔧 DEBUG: Outer Error details - {e}", Fore.RED)
             return False
 
     def monitor_oco_orders(self):
-        """Monitor and clean up OCO orders when position is closed"""
+        """Monitor and clean up orders ONLY when position is closed"""
         try:
             for pair, trade in list(self.bot_opened_trades.items()):
                 if trade['status'] == 'ACTIVE':
@@ -731,7 +724,7 @@ class RealOrderPositionTracker:
         # Display BOT opened positions
         active_bot_trades = {k: v for k, v in self.bot_opened_trades.items() if v['status'] == 'ACTIVE'}
         if active_bot_trades:
-            self.print_color("\n🤖 BOT OPENED POSITIONS (OCO Protected)", Fore.GREEN, Style.BRIGHT)
+            self.print_color("\n🤖 BOT OPENED POSITIONS", Fore.GREEN, Style.BRIGHT)
             self.print_color("-" * 50, Fore.GREEN)
             for pair, trade in active_bot_trades.items():
                 live_data = self.get_live_position_data(pair)
@@ -747,7 +740,6 @@ class RealOrderPositionTracker:
                     self.print_color(f"   ⚡ Leverage: {live_data['leverage']}x", Fore.CYAN)
                     self.print_color(f"   🎯 TP: ${trade['take_profit']} | 🛑 SL: ${trade['stop_loss']}", Fore.YELLOW)
                     self.print_color(f"   🧠 AI Confidence: {trade.get('ai_confidence', 'N/A')}%", Fore.MAGENTA)
-                    self.print_color(f"   🔒 OCO: Active (Auto-cleanup)", Fore.CYAN)
                     self.print_color(f"   ⏱️ Duration: {(time.time() - trade['entry_time']) / 60:.1f} minutes", Fore.WHITE)
                     self.print_color("-" * 30, Fore.GREEN)
                     
@@ -855,7 +847,7 @@ class RealOrderPositionTracker:
 
     def start_trading(self):
         """Main trading loop"""
-        self.print_color("🚀 STARTING REAL ORDER POSITION TRACKER WITH OCO!", Fore.CYAN, Style.BRIGHT)
+        self.print_color("🚀 STARTING REAL ORDER POSITION TRACKER!", Fore.CYAN, Style.BRIGHT)
         self.print_color("🔍 Scanning for existing positions in Binance...", Fore.CYAN)
         
         self.scan_existing_positions()
@@ -883,10 +875,6 @@ class RealOrderPositionTracker:
                 
             except KeyboardInterrupt:
                 self.print_color(f"\n🛑 BOT STOPPED BY USER", Fore.RED)
-                # Final cleanup
-                self.print_color("🧹 Performing final order cleanup...", Fore.YELLOW)
-                for pair in self.available_pairs:
-                    self.cleanup_old_orders(pair)
                 break
             except Exception as e:
                 self.print_color(f"❌ Main loop error: {e}", Fore.RED)
