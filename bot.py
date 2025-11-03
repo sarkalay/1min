@@ -451,6 +451,8 @@ class RealOrderPositionTracker:
             
             # ✅ Step 1: Open position with MARKET order
             try:
+                self.print_color(f"🔧 DEBUG: Attempting to open {direction} position for {pair}...", Fore.YELLOW)
+                
                 if direction == "LONG":
                     order = self.binance.futures_create_order(
                         symbol=pair,
@@ -459,6 +461,7 @@ class RealOrderPositionTracker:
                         quantity=quantity
                     )
                     self.print_color(f"✅ REAL LONG ORDER EXECUTED: {quantity} {pair} @ ${current_price}", Fore.GREEN)
+                    self.print_color(f"🔧 DEBUG: Long order response: {order}", Fore.YELLOW)
                 else:
                     order = self.binance.futures_create_order(
                         symbol=pair,
@@ -467,11 +470,14 @@ class RealOrderPositionTracker:
                         quantity=quantity
                     )
                     self.print_color(f"✅ REAL SHORT ORDER EXECUTED: {quantity} {pair} @ ${current_price}", Fore.GREEN)
+                    self.print_color(f"🔧 DEBUG: Short order response: {order}", Fore.YELLOW)
                 
                 # ✅ Step 2: Wait for position to open
-                time.sleep(2)
+                self.print_color(f"⏳ Waiting for position to open...", Fore.BLUE)
+                time.sleep(3)
                 
                 # ✅ Step 3: Place OCO ORDER using STOP_MARKET and TAKE_PROFIT_MARKET
+                self.print_color(f"🔧 DEBUG: Placing TP/SL orders...", Fore.YELLOW)
                 
                 # Place STOP LOSS order
                 sl_order = self.binance.futures_create_order(
@@ -483,6 +489,7 @@ class RealOrderPositionTracker:
                     reduceOnly=True,
                     timeInForce='GTC'
                 )
+                self.print_color(f"🔧 DEBUG: SL order response: {sl_order}", Fore.YELLOW)
                 
                 # Place TAKE PROFIT order  
                 tp_order = self.binance.futures_create_order(
@@ -494,6 +501,7 @@ class RealOrderPositionTracker:
                     reduceOnly=True,
                     timeInForce='GTC'
                 )
+                self.print_color(f"🔧 DEBUG: TP order response: {tp_order}", Fore.YELLOW)
                 
                 self.print_color(f"✅ OCO ORDERS PLACED - TP/SL activated!", Fore.GREEN)
                 self.print_color(f"   🛑 SL Order ID: {sl_order['orderId']}", Fore.YELLOW)
@@ -521,16 +529,19 @@ class RealOrderPositionTracker:
                 
             except BinanceAPIException as e:
                 self.print_color(f"❌ Binance API Error: {e}", Fore.RED)
+                self.print_color(f"🔧 DEBUG: API Error details - {e}", Fore.RED)
                 # Clean up on error
                 self.cleanup_old_orders(pair)
                 return False
             except Exception as e:
                 self.print_color(f"❌ Order execution failed: {e}", Fore.RED)
+                self.print_color(f"🔧 DEBUG: General Error details - {e}", Fore.RED)
                 self.cleanup_old_orders(pair)
                 return False
             
         except Exception as e:
             self.print_color(f"❌ Trade execution failed: {e}", Fore.RED)
+            self.print_color(f"🔧 DEBUG: Outer Error details - {e}", Fore.RED)
             return False
 
     def monitor_oco_orders(self):
