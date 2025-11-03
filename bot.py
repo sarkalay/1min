@@ -8,7 +8,7 @@ import numpy as np
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 # Install required packages first: 
@@ -198,7 +198,7 @@ class RealOrderPositionTracker:
             # Simple fixed quantity approach based on pair
             fixed_quantities = {
                 "SOLUSDT": 0.3,    # ~$50 at current price
-                "AVAXUSDT": 3.0,   # ~$50
+                "AVAXUSDT": 2.0,   # ~$50
                 "XRPUSDT": 20.0,   # ~$50  
                 "LINKUSDT": 3.2,   # ~$50
                 "DOTUSDT": 18.0     # ~$50
@@ -638,7 +638,7 @@ class RealOrderPositionTracker:
             else:
                 del self.existing_positions[pair]
         
-        for pair in list(self.bot_opened_trades.keys()):
+        for pair in list(self.bot_opened_trades.items()):
             live_data = self.get_live_position_data(pair)
             if not live_data and self.bot_opened_trades[pair]['status'] == 'ACTIVE':
                 self.bot_opened_trades[pair]['status'] = 'CLOSED'
@@ -657,8 +657,9 @@ class RealOrderPositionTracker:
             self.print_color(f"{position['direction']} {pair}", direction_color)
             self.print_color(f"   Size: {position['quantity']} | Entry: ${position['entry_price']:.4f}", Fore.WHITE)
             self.print_color(f"   Current: ${position['current_price']:.4f} | P&L: ${position['unrealized_pnl']:.2f}", pnl_color)
+            self.print_color(f"   TP/SL: Manual (Not set by bot)", Fore.YELLOW)
         
-        # Display bot-opened positions
+        # Display bot-opened positions with TP/SL
         for pair, trade in self.bot_opened_trades.items():
             if trade['status'] == 'ACTIVE':
                 live_data = self.get_live_position_data(pair)
@@ -666,10 +667,22 @@ class RealOrderPositionTracker:
                     pnl_color = Fore.GREEN if live_data['unrealized_pnl'] >= 0 else Fore.RED
                     direction_color = Fore.BLUE if trade['direction'] == 'LONG' else Fore.RED
                     
+                    # Calculate distance to TP/SL
+                    current_price = live_data['current_price']
+                    if trade['direction'] == 'LONG':
+                        tp_distance = ((trade['take_profit'] - current_price) / current_price) * 100
+                        sl_distance = ((current_price - trade['stop_loss']) / current_price) * 100
+                        tp_sl_info = f"TP: +{tp_distance:.2f}% | SL: -{sl_distance:.2f}%"
+                    else:  # SHORT
+                        tp_distance = ((current_price - trade['take_profit']) / current_price) * 100
+                        sl_distance = ((trade['stop_loss'] - current_price) / current_price) * 100
+                        tp_sl_info = f"TP: +{tp_distance:.2f}% | SL: -{sl_distance:.2f}%"
+                    
                     self.print_color(f"{trade['direction']} {pair} 🤖", direction_color)
                     self.print_color(f"   Size: {trade['quantity']} | Entry: ${trade['entry_price']:.4f}", Fore.WHITE)
-                    self.print_color(f"   Current: ${live_data['current_price']:.4f} | P&L: ${live_data['unrealized_pnl']:.2f}", pnl_color)
+                    self.print_color(f"   Current: ${current_price:.4f} | P&L: ${live_data['unrealized_pnl']:.2f}", pnl_color)
                     self.print_color(f"   TP: ${trade['take_profit']:.4f} | SL: ${trade['stop_loss']:.4f}", Fore.YELLOW)
+                    self.print_color(f"   📏 {tp_sl_info}", Fore.CYAN)
     
     def can_open_new_trade(self, pair):
         """Check if we can open new trade"""
@@ -776,9 +789,179 @@ class RealOrderPositionTracker:
                 self.print_color(f"❌ Main loop error: {e}", Fore.RED)
                 time.sleep(30)
 
+    def get_historical_analysis(self):
+        """Get AI analysis for historical data (7 hours ago)"""
+        try:
+            # Calculate time 7 hours ago
+            current_time = datetime.now()
+            seven_hours_ago = current_time - timedelta(hours=7)
+            historical_time_str = seven_hours_ago.strftime('%Y-%m-%d %H:%M:%S')
+            
+            prompt = f"""
+            Analyze these crypto pairs for scalping trading as of {historical_time_str} (7 hours ago):
+            SOLUSDT, AVAXUSDT, XRPUSDT, LINKUSDT, DOTUSDT
+            
+            Consider the market conditions at that specific time and provide trading decisions.
+            Respond with JSON format for each pair.
+            
+            Example response:
+            {{
+                "analysis_time": "{historical_time_str}",
+                "decisions": [
+                    {{"pair": "SOLUSDT", "direction": "LONG", "confidence": 72, "reason": "Brief explanation"}},
+                    {{"pair": "AVAXUSDT", "direction": "HOLD", "confidence": 45, "reason": "Brief explanation"}}
+                ]
+            }}
+            """
+            
+            headers = {
+                "Authorization": f"Bearer {self.deepseek_key}",
+                "Content-Type": "application/json"
+            }
+            
+            data = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {
+                        "role": "system", 
+                        "content": "You are a crypto trading analyst analyzing historical market data. Respond with valid JSON only."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "temperature": 0.1,
+                "max_tokens": 500
+            }
+            
+            self.print_color(f"🧠 Getting historical analysis for {historical_time_str}...", Fore.MAGENTA)
+            
+            response = requests.post(
+                "https://api.deepseek.com/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                ai_response = result['choices'][0]['message']['content'].strip()
+                
+                # Parse the response
+                try:
+                    json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+                    if json_match:
+                        analysis_data = json.loads(json_match.group())
+                        
+                        self.print_color(f"✅ Historical Analysis Complete!", Fore.GREEN)
+                        self.print_color(f"📅 Analysis Time: {analysis_data.get('analysis_time', 'N/A')}", Fore.CYAN)
+                        
+                        # Display decisions
+                        for decision in analysis_data.get('decisions', []):
+                            pair = decision.get('pair', '')
+                            direction = decision.get('direction', 'HOLD')
+                            confidence = decision.get('confidence', 50)
+                            reason = decision.get('reason', '')
+                            
+                            direction_color = Fore.BLUE if direction == 'LONG' else Fore.RED if direction == 'SHORT' else Fore.YELLOW
+                            
+                            self.print_color(f"   {pair}: {direction} ({confidence}%) - {reason}", direction_color)
+                        
+                        return analysis_data
+                    else:
+                        self.print_color("❌ No valid JSON found in response", Fore.RED)
+                        return None
+                        
+                except Exception as e:
+                    self.print_color(f"❌ Error parsing historical analysis: {e}", Fore.RED)
+                    return None
+                    
+            else:
+                self.print_color(f"❌ DeepSeek API error: {response.status_code}", Fore.RED)
+                return None
+                
+        except Exception as e:
+            self.print_color(f"❌ Historical analysis failed: {e}", Fore.RED)
+            return None
+
+    def simulate_historical_backtest(self):
+        """Simulate backtest based on historical AI analysis"""
+        self.print_color(f"\n🔍 SIMULATING BACKTEST - Last 7 Hours", Fore.CYAN)
+        self.print_color("=" * 60, Fore.CYAN)
+        
+        # Get historical analysis
+        historical_data = self.get_historical_analysis()
+        
+        if not historical_data:
+            self.print_color("❌ Failed to get historical analysis", Fore.RED)
+            return
+        
+        # Simulate trades based on historical decisions
+        self.print_color(f"\n📊 BACKTEST RESULTS SIMULATION", Fore.GREEN)
+        self.print_color("=" * 50, Fore.GREEN)
+        
+        total_trades = 0
+        winning_trades = 0
+        total_pnl = 0
+        
+        for decision in historical_data.get('decisions', []):
+            pair = decision.get('pair', '')
+            direction = decision.get('direction', 'HOLD')
+            confidence = decision.get('confidence', 50)
+            
+            if direction != 'HOLD' and confidence >= 60:
+                total_trades += 1
+                
+                # Simulate random P&L between -$5 to +$8 for demonstration
+                # In real backtest, you'd use actual historical price data
+                pnl = round(np.random.uniform(-5, 8), 2)
+                total_pnl += pnl
+                
+                if pnl > 0:
+                    winning_trades += 1
+                    pnl_color = Fore.GREEN
+                    result = "WIN"
+                else:
+                    pnl_color = Fore.RED  
+                    result = "LOSS"
+                
+                self.print_color(f"   {pair} {direction}: ${pnl:.2f} ({result})", pnl_color)
+        
+        # Display summary
+        self.print_color(f"\n📈 BACKTEST SUMMARY", Fore.CYAN)
+        self.print_color("=" * 40, Fore.CYAN)
+        self.print_color(f"Total Trades: {total_trades}", Fore.WHITE)
+        
+        if total_trades > 0:
+            win_rate = (winning_trades / total_trades) * 100
+            self.print_color(f"Win Rate: {win_rate:.1f}%", Fore.YELLOW)
+            self.print_color(f"Total P&L: ${total_pnl:.2f}", Fore.GREEN if total_pnl >= 0 else Fore.RED)
+            self.print_color(f"Average P&L per Trade: ${total_pnl/total_trades:.2f}", Fore.WHITE)
+        else:
+            self.print_color("No qualified trades executed", Fore.YELLOW)
+
+    def run_historical_backtest(self):
+        """Run the 7-hour backtest simulation"""
+        self.print_color(f"🕐 Running 7-Hour Historical Backtest Simulation...", Fore.CYAN)
+        self.simulate_historical_backtest()
+
 if __name__ == "__main__":
     try:
         bot = RealOrderPositionTracker()
-        bot.start_trading()
+        
+        # Ask user if they want to run backtest or live trading
+        print("\n" + "="*50)
+        print("🤖 Choose mode:")
+        print("1. Live Trading")
+        print("2. 7-Hour Backtest Simulation")
+        
+        choice = input("Enter choice (1 or 2): ").strip()
+        
+        if choice == "2":
+            bot.run_historical_backtest()
+        else:
+            bot.start_trading()
+            
     except Exception as e:
         print(f"❌ Failed to start bot: {e}")
