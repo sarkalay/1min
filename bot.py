@@ -198,10 +198,10 @@ class RealOrderPositionTracker:
             # Simple fixed quantity approach based on pair
             fixed_quantities = {
                 "SOLUSDT": 0.3,    # ~$50 at current price
-                "AVAXUSDT": 2.0,   # ~$50
-                "XRPUSDT": 80.0,   # ~$50  
-                "LINKUSDT": 3.0,   # ~$50
-                "DOTUSDT": 4.0     # ~$50
+                "AVAXUSDT": 3.0,   # ~$50
+                "XRPUSDT": 20.0,   # ~$50  
+                "LINKUSDT": 3.2,   # ~$50
+                "DOTUSDT": 18.0     # ~$50
             }
             
             quantity = fixed_quantities.get(pair)
