@@ -34,21 +34,23 @@ class PureAIBot:
         self.th_tz = pytz.timezone('Asia/Bangkok')
         self.pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
         
-        # FIXED SIZE
+        # FIXED STRATEGY
         self.fixed_size_usd = 50
+        self.tp_percent = 0.008   # +0.8%
+        self.sl_percent = 0.005   # -0.5%
         
-        # PAPER STATE
+        # PAPER
         self.paper_balance = 1000.0
         self.paper_positions = {}
         self.paper_history = []
         
-        # LIVE STATE
+        # LIVE
         self.active_trades = {}
         self.trade_history = []
         
-        self.printc("PURE AI SCALPING BOT", Fore.CYAN + Style.BRIGHT)
-        self.printc(f"FIXED SIZE: ${self.fixed_size_usd}", Fore.YELLOW + Style.BRIGHT)
-        self.printc("AI DECIDES: Direction, TP, SL, Entry, Confidence", Fore.MAGENTA)
+        self.printc("AI SCALPING BOT", Fore.CYAN + Style.BRIGHT)
+        self.printc(f"SIZE: ${self.fixed_size_usd} | TP: +0.8% | SL: -0.5%", Fore.YELLOW + Style.BRIGHT)
+        self.printc("AI DECIDES: LONG/SHORT + ENTRY ONLY", Fore.MAGENTA)
 
     def printc(self, text, color=Fore.WHITE):
         print(f"{color}{text}{Style.RESET_ALL if COLORAMA else ''}")
@@ -82,7 +84,7 @@ class PureAIBot:
         except:
             return 100.0
 
-    def ask_ai_full_analysis(self, symbol):
+    def ask_ai_signal(self, symbol):
         prices = self.get_klines(symbol, 50)
         current = prices[-1]
         
@@ -91,18 +93,19 @@ class PureAIBot:
         Current price: ${current:.6f}
         Last 10 closes: {prices[-10:]} (latest on right)
 
-        Decide: LONG, SHORT, or HOLD.
-        If trade: give entry, TP, SL, confidence, reason.
-        Trade size is FIXED $50 — DO NOT include it.
+        You are a scalper. Decide NOW:
+        - LONG: if strong up momentum
+        - SHORT: if strong down momentum
+        - HOLD: if unclear
+
+        Entry price: suggest exact entry (can be current or better)
 
         Return VALID JSON only:
         {{
             "action": "LONG" | "SHORT" | "HOLD",
-            "confidence": 0-100,
             "entry_price": float,
-            "take_profit": float,
-            "stop_loss": float,
-            "reason": "short reason"
+            "confidence": 0-100,
+            "reason": "1-sentence reason"
         }}
         """
 
@@ -111,13 +114,13 @@ class PureAIBot:
             data = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": "You are a 1-min scalper. Return perfect JSON only."},
+                    {"role": "system", "content": "You are a 1-min scalper. Be decisive. Return perfect JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.3,
-                "max_tokens": 400
+                "max_tokens": 300
             }
-            self.printc(f"AI ANALYZING {symbol}...", Fore.MAGENTA)
+            self.printc(f"AI SCANNING {symbol}...", Fore.MAGENTA)
             resp = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=data, timeout=40)
             
             if resp.status_code != 200:
@@ -129,7 +132,7 @@ class PureAIBot:
                 return None
                 
             decision = json.loads(json_match.group())
-            required = ['action', 'confidence', 'take_profit', 'stop_loss', 'reason']
+            required = ['action', 'entry_price', 'confidence', 'reason']
             if not all(k in decision for k in required):
                 return None
             if decision['action'] not in ['LONG', 'SHORT', 'HOLD']:
@@ -140,6 +143,15 @@ class PureAIBot:
             self.printc(f"AI Error: {e}", Fore.RED)
             return None
 
+    def calculate_tp_sl(self, entry, direction):
+        if direction == 'LONG':
+            tp = entry * (1 + self.tp_percent)
+            sl = entry * (1 - self.sl_percent)
+        else:  # SHORT
+            tp = entry * (1 - self.tp_percent)
+            sl = entry * (1 + self.sl_percent)
+        return round(tp, 6), round(sl, 6)
+
     def can_open_trade(self, is_paper):
         if is_paper:
             return len(self.paper_positions) < 3
@@ -147,35 +159,36 @@ class PureAIBot:
             return len(self.active_trades) < 3
 
     def execute_trade(self, decision, symbol, is_paper):
-        price = self.get_price(symbol)
-        quantity = round(self.fixed_size_usd / price, 6)
+        entry = decision['entry_price']
+        quantity = round(self.fixed_size_usd / entry, 6)
         if quantity <= 0:
             return False
+
+        tp, sl = self.calculate_tp_sl(entry, decision['action'])
 
         trade = {
             'symbol': symbol,
             'direction': decision['action'],
-            'entry': price,
+            'entry': entry,
             'quantity': quantity,
-            'tp': decision['take_profit'],
-            'sl': decision['stop_loss'],
+            'tp': tp,
+            'sl': sl,
             'confidence': decision['confidence'],
             'reason': decision['reason'],
             'time': self.get_th_time()
         }
 
         if is_paper:
-            # PAPER
             self.paper_positions[symbol] = trade
             self.paper_balance -= self.fixed_size_usd
-            self.printc(f"PAPER TRADE: {symbol} {trade['direction']}", Fore.GREEN)
-            self.printc(f"   ${self.fixed_size_usd} → {quantity} | TP: ${trade['tp']:.4f} | SL: ${trade['sl']:.4f}", Fore.CYAN)
+            self.printc(f"PAPER {decision['action']} {symbol}", Fore.GREEN)
+            self.printc(f"   Entry: ${entry:.4f} | TP: ${tp:.4f} | SL: ${sl:.4f}", Fore.CYAN)
+            self.printc(f"   Size: ${self.fixed_size_usd} | Conf: {decision['confidence']}%", Fore.YELLOW)
             return True
         else:
-            # LIVE
             client = self.get_client()
             if not client:
-                self.printc("NO BINANCE KEYS → CANNOT TRADE LIVE", Fore.RED)
+                self.printc("NO KEYS → CANNOT TRADE LIVE", Fore.RED)
                 return False
             try:
                 side = 'BUY' if decision['action'] == 'LONG' else 'SELL'
@@ -184,8 +197,8 @@ class PureAIBot:
 
                 time.sleep(2)
                 close_side = 'SELL' if decision['action'] == 'LONG' else 'BUY'
-                client.futures_create_order(symbol=symbol, side=close_side, type='STOP_MARKET', quantity=quantity, stopPrice=trade['sl'], reduceOnly=True)
-                client.futures_create_order(symbol=symbol, side=close_side, type='TAKE_PROFIT_MARKET', quantity=quantity, stopPrice=trade['tp'], reduceOnly=True)
+                client.futures_create_order(symbol=symbol, side=close_side, type='STOP_MARKET', quantity=quantity, stopPrice=sl, reduceOnly=True)
+                client.futures_create_order(symbol=symbol, side=close_side, type='TAKE_PROFIT_MARKET', quantity=quantity, stopPrice=tp, reduceOnly=True)
                 self.printc("TP & SL PLACED", Fore.GREEN)
 
                 self.active_trades[symbol] = trade
@@ -256,8 +269,7 @@ class PureAIBot:
             self.printc(f"\nLIVE | Active: {len(self.active_trades)}", Fore.CYAN + Style.BRIGHT)
 
     def run_paper(self):
-        self.printc("STARTING PAPER TRADING MODE", Fore.GREEN + Style.BRIGHT)
-        self.printc("NO RISK - TESTING AI STRATEGY", Fore.YELLOW)
+        self.printc("STARTING PAPER TRADING", Fore.GREEN + Style.BRIGHT)
         cycle = 0
         while True:
             try:
@@ -271,13 +283,13 @@ class PureAIBot:
                         continue
                     if not self.can_open_trade(is_paper=True):
                         continue
-                    decision = self.ask_ai_full_analysis(symbol)
+                    decision = self.ask_ai_signal(symbol)
                     if decision and decision['action'] in ['LONG', 'SHORT']:
                         self.execute_trade(decision, symbol, is_paper=True)
 
                 time.sleep(25)
             except KeyboardInterrupt:
-                self.printc("\nPAPER BOT STOPPED", Fore.RED)
+                self.printc("\nPAPER STOPPED", Fore.RED)
                 break
 
     def run_live(self):
@@ -286,11 +298,10 @@ class PureAIBot:
             return
         confirm = input("TYPE 'YES' TO START REAL TRADING: ").strip().upper()
         if confirm != 'YES':
-            self.printc("LIVE TRADING CANCELLED", Fore.YELLOW)
+            self.printc("LIVE CANCELLED", Fore.YELLOW)
             return
 
         self.printc("STARTING LIVE TRADING", Fore.RED + Style.BRIGHT)
-        self.printc("REAL MONEY AT RISK!", Fore.RED + Style.BRIGHT)
         cycle = 0
         while True:
             try:
@@ -304,13 +315,13 @@ class PureAIBot:
                         continue
                     if not self.can_open_trade(is_paper=False):
                         continue
-                    decision = self.ask_ai_full_analysis(symbol)
+                    decision = self.ask_ai_signal(symbol)
                     if decision and decision['action'] in ['LONG', 'SHORT']:
                         self.execute_trade(decision, symbol, is_paper=False)
 
                 time.sleep(25)
             except KeyboardInterrupt:
-                self.printc("\nLIVE BOT STOPPED", Fore.RED)
+                self.printc("\nLIVE STOPPED", Fore.RED)
                 break
 
 
@@ -318,7 +329,7 @@ if __name__ == "__main__":
     bot = PureAIBot()
     
     print("\n" + "="*60)
-    print("PURE AI SCALPING BOT")
+    print("AI SCALPING BOT")
     print("="*60)
     print("1. REAL TRADING (Real Money)")
     print("2. PAPER TRADING (No Risk)")
@@ -331,4 +342,4 @@ if __name__ == "__main__":
     elif choice == "2":
         bot.run_paper()
     else:
-        print("Invalid choice. Run again.")
+        print("Invalid. Run again.")
