@@ -33,7 +33,7 @@ if not COLORAMA_AVAILABLE:
     Back = DummyColors() 
     Style = DummyColors()
 
-class ThreeMinScalpingBot:
+class OneMinScalpingBot:
     def __init__(self):
         # Load config from .env file
         self.binance_api_key = os.getenv('BINANCE_API_KEY')
@@ -49,7 +49,7 @@ class ThreeMinScalpingBot:
         # Thailand timezone
         self.thailand_tz = pytz.timezone('Asia/Bangkok')
         
-        # 3MIN SCALPING PARAMETERS
+        # 1MIN SCALPING PARAMETERS
         self.trade_size_usd = 50
         self.leverage = 5
         self.tp_percent = 0.008   # +0.8%
@@ -63,7 +63,7 @@ class ThreeMinScalpingBot:
         self.bot_opened_trades = {}
         
         # Trade history
-        self.trade_history_file = "3min_scalping_history.json"
+        self.trade_history_file = "1min_scalping_history.json"
         self.trade_history = self.load_trade_history()
         
         # Precision settings
@@ -73,10 +73,10 @@ class ThreeMinScalpingBot:
         # Initialize Binance client
         try:
             self.binance = Client(self.binance_api_key, self.binance_secret)
-            self.print_color(f"🎯 3MIN SCALPING BOT ACTIVATED!", self.Fore.CYAN + self.Style.BRIGHT)
+            self.print_color(f"🎯 1MIN SCALPING BOT ACTIVATED!", self.Fore.CYAN + self.Style.BRIGHT)
             self.print_color(f"TP: +0.8% | SL: -0.5% | R:R = 1.6", self.Fore.GREEN)
             self.print_color(f"Trade Size: ${self.trade_size_usd} | Leverage: {self.leverage}x", self.Fore.YELLOW)
-            self.print_color(f"Chart: 3MIN | Max Trades: {self.max_concurrent_trades}", self.Fore.MAGENTA)
+            self.print_color(f"Chart: 1MIN | Max Trades: {self.max_concurrent_trades}", self.Fore.MAGENTA)
         except Exception as e:
             self.print_color(f"Binance initialization failed: {e}", self.Fore.RED)
             # Create dummy client for paper trading
@@ -120,7 +120,7 @@ class ThreeMinScalpingBot:
         if not self.trade_history:
             self.print_color("No trade history found", self.Fore.YELLOW)
             return
-        self.print_color(f"\n📋 3MIN SCALPING HISTORY (Last {min(limit, len(self.trade_history))} trades)", self.Fore.CYAN)
+        self.print_color(f"\n📋 1MIN SCALPING HISTORY (Last {min(limit, len(self.trade_history))} trades)", self.Fore.CYAN)
         self.print_color("=" * 90, self.Fore.CYAN)
         for i, trade in enumerate(reversed(self.trade_history[-limit:])):
             pnl = trade.get('pnl', 0)
@@ -263,23 +263,23 @@ class ThreeMinScalpingBot:
             
             current_price = market_data['current_price']
             
-            # 3-minute scalping focused prompt
+            # 1-minute scalping focused prompt
             prompt = f"""
-            Analyze {pair} for 3-minute scalping trading. Current price: ${current_price:.4f}
+            Analyze {pair} for 1-minute scalping trading. Current price: ${current_price:.4f}
             
-            Timeframe: 3-minute charts
+            Timeframe: 1-minute charts
             Strategy: Quick scalping
-            Holding time: 3-10 minutes
+            Holding time: 1-5 minutes
             Target: +0.8% profit
             Stop Loss: -0.5%
             
-            Provide your trading recommendation based on your analysis of the 3-minute chart.
+            Provide your trading recommendation based on your analysis of the 1-minute chart.
             
             Respond with this JSON format only:
             {{
                 "direction": "LONG|SHORT|HOLD",
                 "confidence": 0-100,
-                "reason": "Your analysis reason for 3-minute timeframe"
+                "reason": "Your analysis reason for 1-minute timeframe"
             }}
             """
             
@@ -287,14 +287,14 @@ class ThreeMinScalpingBot:
             data = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": "You are a crypto scalping specialist. Analyze 3-minute charts for quick trading opportunities. Respond with valid JSON only."},
+                    {"role": "system", "content": "You are a crypto scalping specialist. Analyze 1-minute charts for quick trading opportunities. Respond with valid JSON only."},
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.3,
                 "max_tokens": 300
             }
             
-            self.print_color(f"🤖 AI Analyzing {pair} on 3MIN chart...", self.Fore.MAGENTA)
+            self.print_color(f"🤖 AI Analyzing {pair} on 1MIN chart...", self.Fore.MAGENTA)
             response = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=data, timeout=30)
             
             if response.status_code == 200:
@@ -305,7 +305,7 @@ class ThreeMinScalpingBot:
                 # Log the AI decision with icons
                 direction_icon = "📈" if direction == "LONG" else "📉" if direction == "SHORT" else "⏸️"
                 color = self.Fore.BLUE if direction == "LONG" else self.Fore.RED if direction == "SHORT" else self.Fore.YELLOW
-                self.print_color(f"{direction_icon} 3MIN AI: {direction} ({confidence}%) - {reason}", color)
+                self.print_color(f"{direction_icon} 1MIN AI: {direction} ({confidence}%) - {reason}", color)
                 return direction, confidence, reason
             else:
                 self.print_color(f"DeepSeek API error: {response.status_code}", self.Fore.RED)
@@ -318,8 +318,8 @@ class ThreeMinScalpingBot:
     def get_price_history(self, pair, limit=20):
         try:
             if self.binance:
-                # Use 3-minute interval
-                klines = self.binance.futures_klines(symbol=pair, interval=Client.KLINE_INTERVAL_3MINUTE, limit=limit)
+                # Use 1-minute interval
+                klines = self.binance.futures_klines(symbol=pair, interval=Client.KLINE_INTERVAL_1MINUTE, limit=limit)
                 prices = [float(k[4]) for k in klines]  # Closing prices
                 highs = [float(k[2]) for k in klines]   # High prices
                 lows = [float(k[3]) for k in klines]    # Low prices
@@ -388,18 +388,18 @@ class ThreeMinScalpingBot:
             if current_price <= 0:
                 return {"action": "HOLD", "pair": pair, "direction": "HOLD", "confidence": 0, "reason": "Invalid price"}
             
-            self.print_color(f"🔍 Analyzing {pair} at ${current_price:.4f} (3MIN)...", self.Fore.BLUE)
+            self.print_color(f"🔍 Analyzing {pair} at ${current_price:.4f} (1MIN)...", self.Fore.BLUE)
             market_data = self.get_price_history(pair)
             market_data['current_price'] = current_price
             direction, confidence, reason = self.get_deepseek_analysis(pair, market_data)
             
             if direction == "HOLD" or confidence < 70:
-                self.print_color(f"⏸️ 3MIN AI Decision: HOLD ({confidence}%)", self.Fore.YELLOW)
+                self.print_color(f"⏸️ 1MIN AI Decision: HOLD ({confidence}%)", self.Fore.YELLOW)
                 return {"action": "HOLD", "pair": pair, "direction": direction, "confidence": confidence, "reason": reason}
             else:
                 direction_icon = "📈" if direction == "LONG" else "📉"
                 color = self.Fore.BLUE if direction == "LONG" else self.Fore.RED
-                self.print_color(f"🎯 3MIN AI Decision: {direction} {direction_icon} ({confidence}%)", color + self.Style.BRIGHT)
+                self.print_color(f"🎯 1MIN AI Decision: {direction} {direction_icon} ({confidence}%)", color + self.Style.BRIGHT)
                 return {"action": "TRADE", "pair": pair, "direction": direction, "confidence": confidence, "reason": reason}
                 
         except Exception as e:
@@ -706,7 +706,7 @@ class ThreeMinScalpingBot:
             # AI SCANS ALL PAIRS
             market_data = self.get_market_data()
             if market_data:
-                self.print_color(f"\n🤖 3MIN AI SCANNING {len(market_data)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
+                self.print_color(f"\n🤖 1MIN AI SCANNING {len(market_data)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
                 
                 for pair in market_data.keys():
                     if self.can_open_new_trade(pair):
@@ -715,12 +715,12 @@ class ThreeMinScalpingBot:
                         
                         if decision["action"] == "TRADE":
                             direction_icon = "📈" if decision['direction'] == "LONG" else "📉"
-                            self.print_color(f"🚀 3MIN QUALIFIED: {pair} {decision['direction']} {direction_icon} ({decision['confidence']}%)", self.Fore.GREEN + self.Style.BRIGHT)
+                            self.print_color(f"🚀 1MIN QUALIFIED: {pair} {decision['direction']} {direction_icon} ({decision['confidence']}%)", self.Fore.GREEN + self.Style.BRIGHT)
                             success = self.execute_trade(decision)
                         else:
-                            self.print_color(f"⏸️ 3MIN HOLD: {pair} ({decision['confidence']}%)", self.Fore.YELLOW)
+                            self.print_color(f"⏸️ 1MIN HOLD: {pair} ({decision['confidence']}%)", self.Fore.YELLOW)
                     else:
-                        self.print_color(f"↗️ 3MIN SKIPPED: {pair} (position limit reached)", self.Fore.MAGENTA)
+                        self.print_color(f"↗️ 1MIN SKIPPED: {pair} (position limit reached)", self.Fore.MAGENTA)
             else:
                 self.print_color("No market data available", self.Fore.YELLOW)
                 
@@ -729,7 +729,7 @@ class ThreeMinScalpingBot:
 
     def start_trading(self):
         """Start live trading with clear output"""
-        self.print_color("🚀 STARTING 3MIN LIVE TRADING BOT!", self.Fore.CYAN + self.Style.BRIGHT)
+        self.print_color("🚀 STARTING 1MIN LIVE TRADING BOT!", self.Fore.CYAN + self.Style.BRIGHT)
         self.print_color("⚠️  REAL MONEY TRADING - BE CAREFUL!", self.Fore.RED + self.Style.BRIGHT)
         self.cycle_count = 0
         
@@ -739,8 +739,8 @@ class ThreeMinScalpingBot:
                 self.print_color(f"\n🔄 LIVE TRADING CYCLE {self.cycle_count}", self.Fore.CYAN)
                 self.print_color("=" * 50, self.Fore.CYAN)
                 self.run_trading_cycle()
-                self.print_color(f"⏰ Waiting 60 seconds for next 3MIN analysis...", self.Fore.BLUE)
-                time.sleep(60)
+                self.print_color(f"⏰ Waiting 30 seconds for next 1MIN analysis...", self.Fore.BLUE)
+                time.sleep(30)
                 
             except KeyboardInterrupt:
                 self.print_color(f"\n🛑 LIVE TRADING STOPPED", self.Fore.RED + self.Style.BRIGHT)
@@ -748,19 +748,19 @@ class ThreeMinScalpingBot:
                 break
             except Exception as e:
                 self.print_color(f"Main loop error: {e}", self.Fore.RED)
-                time.sleep(60)
+                time.sleep(30)
 
 
-class ThreeMinPaperTradingBot:
+class OneMinPaperTradingBot:
     def __init__(self, real_bot):
         self.real_bot = real_bot
         self.paper_balance = 1000
         self.paper_positions = {}
         self.paper_history = []
         
-        self.real_bot.print_color("🤖 3MIN PAPER TRADING BOT INITIALIZED!", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
+        self.real_bot.print_color("🤖 1MIN PAPER TRADING BOT INITIALIZED!", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
         self.real_bot.print_color(f"💰 Starting Paper Balance: ${self.paper_balance}", self.real_bot.Fore.CYAN)
-        self.real_bot.print_color(f"🎯 Strategy: 3MIN Scalping | TP: +0.8% | SL: -0.5%", self.real_bot.Fore.MAGENTA)
+        self.real_bot.print_color(f"🎯 Strategy: 1MIN Scalping | TP: +0.8% | SL: -0.5%", self.real_bot.Fore.MAGENTA)
         
     def paper_execute_trade(self, decision):
         """Paper trading with clear display"""
@@ -898,7 +898,7 @@ class ThreeMinPaperTradingBot:
             
             market_data = self.real_bot.get_market_data()
             if market_data:
-                self.real_bot.print_color(f"\n🤖 3MIN AI SCANNING FOR PAPER TRADES...", self.real_bot.Fore.BLUE + self.real_bot.Style.BRIGHT)
+                self.real_bot.print_color(f"\n🤖 1MIN AI SCANNING FOR PAPER TRADES...", self.real_bot.Fore.BLUE + self.real_bot.Style.BRIGHT)
                 
                 for pair in market_data.keys():
                     if pair not in self.paper_positions and len(self.paper_positions) < self.real_bot.max_concurrent_trades:
@@ -907,7 +907,7 @@ class ThreeMinPaperTradingBot:
                         
                         if decision["action"] == "TRADE":
                             direction_icon = "📈" if decision['direction'] == "LONG" else "📉"
-                            self.real_bot.print_color(f"🎯 3MIN AI SIGNAL: {pair} {decision['direction']} {direction_icon}", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
+                            self.real_bot.print_color(f"🎯 1MIN AI SIGNAL: {pair} {decision['direction']} {direction_icon}", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
                             self.paper_execute_trade(decision)
             
             self.get_paper_portfolio_status()
@@ -917,7 +917,7 @@ class ThreeMinPaperTradingBot:
 
     def start_paper_trading(self):
         """Start paper trading"""
-        self.real_bot.print_color("🚀 STARTING 3MIN PAPER TRADING!", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
+        self.real_bot.print_color("🚀 STARTING 1MIN PAPER TRADING!", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
         self.real_bot.print_color("💰 NO REAL MONEY AT RISK", self.real_bot.Fore.GREEN)
         
         cycle_count = 0
@@ -927,23 +927,23 @@ class ThreeMinPaperTradingBot:
                 self.real_bot.print_color(f"\n🔄 PAPER CYCLE {cycle_count}", self.real_bot.Fore.CYAN)
                 self.real_bot.print_color("=" * 50, self.real_bot.Fore.CYAN)
                 self.run_paper_trading_cycle()
-                self.real_bot.print_color(f"⏰ Waiting 60 seconds...", self.real_bot.Fore.BLUE)
-                time.sleep(60)
+                self.real_bot.print_color(f"⏰ Waiting 30 seconds...", self.real_bot.Fore.BLUE)
+                time.sleep(30)
                 
             except KeyboardInterrupt:
                 self.real_bot.print_color(f"\n🛑 PAPER TRADING STOPPED", self.real_bot.Fore.RED + self.real_bot.Style.BRIGHT)
                 break
             except Exception as e:
                 self.real_bot.print_color(f"Paper trading error: {e}", self.real_bot.Fore.RED)
-                time.sleep(60)
+                time.sleep(30)
 
 
 if __name__ == "__main__":
     try:
-        real_bot = ThreeMinScalpingBot()
+        real_bot = OneMinScalpingBot()
         
         print("\n" + "="*60)
-        print("🤖 3MIN AI SCALPING BOT")
+        print("🤖 1MIN AI SCALPING BOT")
         print("="*60)
         print("SELECT TRADING MODE:")
         print("1. 🔴 Live Trading (Real Money)")
@@ -958,10 +958,10 @@ if __name__ == "__main__":
                 real_bot.start_trading()
             else:
                 print("Using Paper Trading mode...")
-                paper_bot = ThreeMinPaperTradingBot(real_bot)
+                paper_bot = OneMinPaperTradingBot(real_bot)
                 paper_bot.start_paper_trading()
         else:
-            paper_bot = ThreeMinPaperTradingBot(real_bot)
+            paper_bot = OneMinPaperTradingBot(real_bot)
             paper_bot.start_paper_trading()
             
     except Exception as e:
