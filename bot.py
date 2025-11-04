@@ -57,10 +57,10 @@ class RealOrderPositionTracker:
         # Initialize Binance client
         self.binance = Client(self.binance_api_key, self.binance_secret)
         
-        self.print_color(f"FINAL PERFECT BOT ACTIVATED!", Fore.CYAN + Style.BRIGHT)
+        self.print_color(f"FINAL CLEAN BOT ACTIVATED!", Fore.CYAN + Style.BRIGHT)
         self.print_color(f"Trade Size: ${self.trade_size_usd} | Leverage: {self.leverage}x", Fore.GREEN)
-        self.print_color(f"Max Trades: {self.max_concurrent_trades}", Fore.YELLOW)
-        self.print_color(f"Confidence: ≥70% | Timezone: Thailand", Fore.MAGENTA)
+        self.print_color(f"Max Trades: {self.max_concurrent_trades} | Confidence: ≥70%", Fore.YELLOW)
+        self.print_color(f"TP/SL Auto-Cleanup | No Dangling Orders", Fore.MAGENTA)
         
         self.validate_config()
         self.setup_futures()
@@ -174,7 +174,6 @@ class RealOrderPositionTracker:
                 self.print_color(f"Invalid price: {price} for {pair}", Fore.RED)
                 return None
 
-            # Fixed quantities
             fixed_quantities = {
                 "SOLUSDT": 0.3, "AVAXUSDT": 2.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
             }
@@ -302,19 +301,16 @@ class RealOrderPositionTracker:
             direction = decision["direction"]
             confidence = decision["confidence"]
             
-            # Get current price
             ticker = self.binance.futures_symbol_ticker(symbol=pair)
             current_price = float(ticker['price'])
             if current_price <= 0:
                 self.print_color(f"Invalid price for {pair}", Fore.RED)
                 return False
             
-            # Calculate quantity
             quantity = self.get_quantity(pair, current_price)
             if quantity is None:
                 return False
             
-            # Calculate TP/SL
             if direction == "LONG":
                 tp_raw = current_price * 1.008
                 sl_raw = current_price * 0.995
@@ -325,7 +321,6 @@ class RealOrderPositionTracker:
             take_profit = self.format_price(pair, tp_raw)
             stop_loss = self.format_price(pair, sl_raw)
             
-            # VALIDATE TP/SL
             if direction == "LONG":
                 if take_profit <= current_price or stop_loss >= current_price:
                     self.print_color(f"Invalid TP/SL for LONG", Fore.RED)
@@ -340,7 +335,6 @@ class RealOrderPositionTracker:
             self.print_color(f"   Size: {quantity} | Entry: ${current_price:.4f}", Fore.WHITE)
             self.print_color(f"   TP: ${take_profit:.4f} | SL: ${stop_loss:.4f}", Fore.YELLOW)
             
-            # Open position
             entry_side = 'BUY' if direction == 'LONG' else 'SELL'
             try:
                 order = self.binance.futures_create_order(
@@ -352,7 +346,6 @@ class RealOrderPositionTracker:
                 self.print_color(f"{direction} ORDER EXECUTED", Fore.GREEN)
                 time.sleep(2)
                 
-                # Place TP/SL
                 stop_side = 'SELL' if direction == 'LONG' else 'BUY'
                 
                 self.binance.futures_create_order(
@@ -428,6 +421,71 @@ class RealOrderPositionTracker:
             self.print_color(f"Error getting live data: {e}", Fore.RED)
             return None
 
+    def get_current_price(self, pair):
+        try:
+            ticker = self.binance.futures_symbol_ticker(symbol=pair)
+            return float(ticker['price'])
+        except:
+            return None
+
+    def get_final_pnl(self, pair, trade):
+        try:
+            live = self.get_live_position_data(pair)
+            if live and 'unrealized_pnl' in live:
+                return live['unrealized_pnl']
+            current = self.get_current_price(pair)
+            if not current:
+                return 0
+            if trade['direction'] == 'LONG':
+                return (current - trade['entry_price']) * trade['quantity']
+            else:
+                return (trade['entry_price'] - current) * trade['quantity']
+        except:
+            return 0
+
+    def close_trade_with_cleanup(self, pair, trade):
+        try:
+            open_orders = self.binance.futures_get_open_orders(symbol=pair)
+            canceled = 0
+            for order in open_orders:
+                if order['reduceOnly'] and order['symbol'] == pair:
+                    try:
+                        self.binance.futures_cancel_order(symbol=pair, orderId=order['orderId'])
+                        self.print_color(f"Canceled dangling {order['type']} order: {order['orderId']}", Fore.YELLOW)
+                        canceled += 1
+                    except Exception as e:
+                        self.print_color(f"Failed to cancel order {order['orderId']}: {e}", Fore.RED)
+            
+            trade['status'] = 'CLOSED'
+            trade['exit_time_th'] = self.get_thailand_time()
+            final_pnl = self.get_final_pnl(pair, trade)
+            closed_trade = trade.copy()
+            closed_trade['pnl'] = final_pnl
+            closed_trade['exit_price'] = self.get_current_price(pair)
+            self.add_trade_to_history(closed_trade)
+            
+            self.print_color(f"TRADE CLOSED: {pair} {trade['direction']} | P&L: ${final_pnl:.2f}", 
+                            Fore.GREEN if final_pnl > 0 else Fore.RED)
+            if canceled > 0:
+                self.print_color(f"Cleaned up {canceled} dangling order(s)", Fore.CYAN)
+                
+        except Exception as e:
+            self.print_color(f"Cleanup failed for {pair}: {e}", Fore.RED)
+
+    def monitor_positions(self):
+        try:
+            for pair, trade in list(self.bot_opened_trades.items()):
+                if trade['status'] != 'ACTIVE':
+                    continue
+                
+                live_data = self.get_live_position_data(pair)
+                if not live_data:
+                    # Position closed → TP or SL hit
+                    self.close_trade_with_cleanup(pair, trade)
+                    continue
+        except Exception as e:
+            self.print_color(f"Monitoring error: {e}", Fore.RED)
+
     def scan_existing_positions(self):
         try:
             positions = self.binance.futures_position_information()
@@ -440,11 +498,9 @@ class RealOrderPositionTracker:
                 if position_amt == 0 or pair not in self.available_pairs:
                     continue
                 
-                # Skip if bot opened this position
                 if pair in self.bot_opened_trades and self.bot_opened_trades[pair]['status'] == 'ACTIVE':
                     continue
                 
-                # Add only true manual positions
                 entry_price = float(pos.get('entryPrice', 0))
                 unrealized_pnl = float(pos.get('unRealizedProfit', 0))
                 try:
@@ -476,7 +532,7 @@ class RealOrderPositionTracker:
         
         displayed = set()
         
-        # 1. Bot positions [AI]
+        # Bot positions [AI]
         for pair, trade in self.bot_opened_trades.items():
             if trade['status'] != 'ACTIVE':
                 continue
@@ -502,7 +558,7 @@ class RealOrderPositionTracker:
             self.print_color(f"   TP: ${trade['take_profit']:.4f} | SL: ${trade['stop_loss']:.4f}", Fore.YELLOW)
             self.print_color(f"   TP: +{tp_dist:.2f}% | SL: -{sl_dist:.2f}%", Fore.CYAN)
         
-        # 2. Manual positions
+        # Manual positions
         for pair, pos in self.existing_positions.items():
             if pair in displayed:
                 continue
@@ -543,6 +599,7 @@ class RealOrderPositionTracker:
     def run_trading_cycle(self):
         try:
             self.scan_existing_positions()
+            self.monitor_positions()  # TP/SL cleanup here
             self.display_dashboard()
             if hasattr(self, 'cycle_count') and self.cycle_count % 5 == 0:
                 self.show_trade_history(5)
@@ -566,7 +623,7 @@ class RealOrderPositionTracker:
             self.print_color(f"Trading cycle error: {e}", Fore.RED)
 
     def start_trading(self):
-        self.print_color("STARTING FINAL PERFECT BOT!", Fore.CYAN + Style.BRIGHT)
+        self.print_color("STARTING FINAL CLEAN BOT!", Fore.CYAN + Style.BRIGHT)
         self.cycle_count = 0
         while True:
             try:
@@ -588,13 +645,12 @@ if __name__ == "__main__":
     try:
         bot = RealOrderPositionTracker()
         print("\n" + "="*50)
-        print("FINAL PERFECT BOT READY")
+        print("FINAL CLEAN BOT READY")
         print("1. Live Trading")
-        print("2. Backtest (Not included)")
         choice = input("Enter choice (1): ").strip()
         if choice == "1":
             bot.start_trading()
         else:
-            print("Backtest not included in this version.")
+            print("Backtest not included.")
     except Exception as e:
         print(f"Failed to start bot: {e}")
