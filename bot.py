@@ -40,7 +40,7 @@ class RealOrderPositionTracker:
         self.leverage = 5
         
         # Multi-pair parameters
-        self.max_concurrent_trades = 1
+        self.max_concurrent_trades = 4
         self.available_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
         
         # Track both bot-opened and existing positions
