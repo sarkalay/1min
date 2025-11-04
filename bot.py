@@ -261,7 +261,7 @@ class RealOrderPositionTracker:
             
             # Improved prompt for balanced LONG/SHORT analysis
             prompt = f"""
-            Analyze {pair} for 3-minute scalping trading. Current price: ${current_price:.4f}
+            Analyze {pair} for 1-minute scalping trading. Current price: ${current_price:.4f}
             
             IMPORTANT: Provide OBJECTIVE analysis considering both BULLISH and BEARISH scenarios equally.
             
@@ -274,7 +274,7 @@ class RealOrderPositionTracker:
             Trading Parameters:
             - Target: +0.8% profit
             - Stop Loss: -0.5%
-            - Timeframe: 3-5 minutes hold
+            - Timeframe: 1-3 minutes hold
             - Strategy: Quick momentum scalping
             
             CRITICAL: Be completely objective. If bullish signals are stronger, recommend LONG. 
