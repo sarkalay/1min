@@ -274,7 +274,7 @@ class RealOrderPositionTracker:
             
             prompt = f"""
             Analyze {pair} at ${current_price:.4f} for scalping.
-            Respond with JSON: {{"direction": "LONG|SHORT|HOLD", "confidence": 65, "reason": "brief explanation"}}
+            Respond with JSON: {{"direction": "LONG|SHORT|HOLD", "confidence": 70, "reason": "brief explanation"}}
             """
             
             headers = {
