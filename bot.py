@@ -261,7 +261,7 @@ class RealOrderPositionTracker:
             
             # Improved prompt for balanced LONG/SHORT analysis
             prompt = f"""
-            Analyze {pair} for 1-minute scalping trading. Current price: ${current_price:.4f}
+            Analyze {pair} for 3-minute scalping trading. Current price: ${current_price:.4f}
             
             IMPORTANT: Provide OBJECTIVE analysis considering both BULLISH and BEARISH scenarios equally.
             
