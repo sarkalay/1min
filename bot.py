@@ -54,7 +54,7 @@ class RealOrderPositionTracker:
         self.leverage = 5
         
         # Multi-pair parameters
-        self.max_concurrent_trades = 2
+        self.max_concurrent_trades = 4
         self.available_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
         
         # Track bot-opened trades only
@@ -208,7 +208,7 @@ class RealOrderPositionTracker:
                 return None
 
             fixed_quantities = {
-                "SOLUSDT": 0.3, "AVAXUSDT": 2.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
+                "SOLUSDT": 0.3, "AVAXUSDT": 3.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
             }
             quantity = fixed_quantities.get(pair)
             
@@ -261,7 +261,7 @@ class RealOrderPositionTracker:
             
             # Improved prompt for balanced LONG/SHORT analysis
             prompt = f"""
-            Analyze {pair} for 1-minute scalping trading. Current price: ${current_price:.4f}
+            Analyze {pair} for 3-minute scalping trading. Current price: ${current_price:.4f}
             
             IMPORTANT: Provide OBJECTIVE analysis considering both BULLISH and BEARISH scenarios equally.
             
@@ -274,7 +274,7 @@ class RealOrderPositionTracker:
             Trading Parameters:
             - Target: +0.8% profit
             - Stop Loss: -0.5%
-            - Timeframe: 1-3 minutes hold
+            - Timeframe: 3-5 minutes hold
             - Strategy: Quick momentum scalping
             
             CRITICAL: Be completely objective. If bullish signals are stronger, recommend LONG. 
