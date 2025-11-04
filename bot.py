@@ -40,7 +40,7 @@ class RealOrderPositionTracker:
         self.leverage = 5
         
         # Multi-pair parameters
-        self.max_concurrent_trades = 3
+        self.max_concurrent_trades = 2  # ← အခု ၂ ခု ဖွင့်လို့ ရတယ်
         self.available_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
         
         # Track bot-opened trades only
@@ -57,9 +57,9 @@ class RealOrderPositionTracker:
         # Initialize Binance client
         self.binance = Client(self.binance_api_key, self.binance_secret)
         
-        self.print_color(f"FINAL CLEAN BOT ACTIVATED!", Fore.CYAN + Style.BRIGHT)
+        self.print_color(f"FINAL AI ALWAYS SCAN BOT ACTIVATED!", Fore.CYAN + Style.BRIGHT)
         self.print_color(f"Trade Size: ${self.trade_size_usd} | Leverage: {self.leverage}x", Fore.GREEN)
-        self.print_color(f"Max Trades: {self.max_concurrent_trades} | Confidence: ≥70%", Fore.YELLOW)
+        self.print_color(f"Max Trades: {self.max_concurrent_trades} | AI: ALWAYS ON", Fore.YELLOW)
         self.print_color(f"TP/SL Auto-Cleanup | No Dangling Orders", Fore.MAGENTA)
         
         self.validate_config()
@@ -480,7 +480,6 @@ class RealOrderPositionTracker:
                 
                 live_data = self.get_live_position_data(pair)
                 if not live_data:
-                    # Position closed → TP or SL hit
                     self.close_trade_with_cleanup(pair, trade)
                     continue
         except Exception as e:
@@ -532,7 +531,6 @@ class RealOrderPositionTracker:
         
         displayed = set()
         
-        # Bot positions [AI]
         for pair, trade in self.bot_opened_trades.items():
             if trade['status'] != 'ACTIVE':
                 continue
@@ -558,7 +556,6 @@ class RealOrderPositionTracker:
             self.print_color(f"   TP: ${trade['take_profit']:.4f} | SL: ${trade['stop_loss']:.4f}", Fore.YELLOW)
             self.print_color(f"   TP: +{tp_dist:.2f}% | SL: -{sl_dist:.2f}%", Fore.CYAN)
         
-        # Manual positions
         for pair, pos in self.existing_positions.items():
             if pair in displayed:
                 continue
@@ -585,8 +582,6 @@ class RealOrderPositionTracker:
     def get_market_data(self):
         market_data = {}
         for pair in self.available_pairs:
-            if not self.can_open_new_trade(pair):
-                continue
             try:
                 ticker = self.binance.futures_symbol_ticker(symbol=pair)
                 price = float(ticker['price'])
@@ -599,31 +594,38 @@ class RealOrderPositionTracker:
     def run_trading_cycle(self):
         try:
             self.scan_existing_positions()
-            self.monitor_positions()  # TP/SL cleanup here
+            self.monitor_positions()
             self.display_dashboard()
+            
             if hasattr(self, 'cycle_count') and self.cycle_count % 5 == 0:
                 self.show_trade_history(5)
             
-            if len(self.bot_opened_trades) + len(self.existing_positions) < self.max_concurrent_trades:
-                market_data = self.get_market_data()
-                if market_data:
-                    self.print_color(f"\nLooking for opportunities...", Fore.BLUE)
-                    for pair in market_data.keys():
-                        if self.can_open_new_trade(pair):
-                            pair_data = {pair: market_data[pair]}
-                            decision = self.get_ai_decision(pair_data)
-                            if decision["action"] == "TRADE":
-                                self.print_color(f"QUALIFIED: {pair}", Fore.GREEN)
-                                success = self.execute_trade(decision)
-                                if success:
-                                    break
-                            else:
-                                self.print_color(f"HOLD: {pair}", Fore.YELLOW)
+            # AI ALWAYS SCANS ALL PAIRS
+            market_data = self.get_market_data()
+            if market_data:
+                self.print_color(f"\nAI ALWAYS SCANNING {len(market_data)} PAIRS...", Fore.BLUE + Style.BRIGHT)
+                for pair in market_data.keys():
+                    if self.can_open_new_trade(pair):
+                        pair_data = {pair: market_data[pair]}
+                        decision = self.get_ai_decision(pair_data)
+                        if decision["action"] == "TRADE":
+                            self.print_color(f"QUALIFIED: {pair} {decision['direction']} ({decision['confidence']}%)", Fore.GREEN + Style.BRIGHT)
+                            success = self.execute_trade(decision)
+                            if success:
+                                # Continue scanning, but don't open more than max_concurrent
+                                pass
+                        else:
+                            self.print_color(f"HOLD: {pair} ({decision['confidence']}%)", Fore.YELLOW)
+                    else:
+                        self.print_color(f"SKIPPED: {pair} (already active)", Fore.MAGENTA)
+            else:
+                self.print_color("No market data available", Fore.YELLOW)
+                
         except Exception as e:
             self.print_color(f"Trading cycle error: {e}", Fore.RED)
 
     def start_trading(self):
-        self.print_color("STARTING FINAL CLEAN BOT!", Fore.CYAN + Style.BRIGHT)
+        self.print_color("STARTING FINAL AI ALWAYS SCAN BOT!", Fore.CYAN + Style.BRIGHT)
         self.cycle_count = 0
         while True:
             try:
@@ -645,7 +647,7 @@ if __name__ == "__main__":
     try:
         bot = RealOrderPositionTracker()
         print("\n" + "="*50)
-        print("FINAL CLEAN BOT READY")
+        print("FINAL AI ALWAYS SCAN BOT READY")
         print("1. Live Trading")
         choice = input("Enter choice (1): ").strip()
         if choice == "1":
