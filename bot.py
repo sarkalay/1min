@@ -56,7 +56,7 @@ class ThreeMinScalpingBot:
         self.sl_percent = 0.005   # -0.5%
         
         # Multi-pair parameters
-        self.max_concurrent_trades = 2
+        self.max_concurrent_trades = 5
         self.available_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
         
         # Track bot-opened trades only
@@ -212,7 +212,7 @@ class ThreeMinScalpingBot:
                 return None
 
             fixed_quantities = {
-                "SOLUSDT": 0.3, "AVAXUSDT": 2.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
+                "SOLUSDT": 0.3, "AVAXUSDT": 3.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
             }
             quantity = fixed_quantities.get(pair)
             
@@ -448,36 +448,256 @@ class ThreeMinScalpingBot:
         return len(self.bot_opened_trades) < self.max_concurrent_trades
 
     def execute_trade(self, decision):
-        # This is just a placeholder for paper trading
-        self.print_color("💡 LIVE TRADING DISABLED - Using Paper Trading", self.Fore.YELLOW)
-        return False
+        """LIVE TRADING - Clear display of all trade details"""
+        try:
+            pair = decision["pair"]
+            if not self.can_open_new_trade(pair):
+                self.print_color(f"❌ Cannot open {pair} - position exists", self.Fore.RED)
+                return False
+            
+            direction = decision["direction"]
+            confidence = decision["confidence"]
+            reason = decision["reason"]
+            
+            # Get current price
+            ticker = self.binance.futures_symbol_ticker(symbol=pair)
+            current_price = float(ticker['price'])
+            if current_price <= 0:
+                self.print_color(f"❌ Invalid price for {pair}", self.Fore.RED)
+                return False
+            
+            # Calculate quantity
+            quantity = self.get_quantity(pair, current_price)
+            if quantity is None:
+                return False
+            
+            # Calculate TP/SL
+            if direction == "LONG":
+                take_profit = current_price * (1 + self.tp_percent)   # +0.8%
+                stop_loss = current_price * (1 - self.sl_percent)     # -0.5%
+            else:  # SHORT
+                take_profit = current_price * (1 - self.tp_percent)   # -0.8%
+                stop_loss = current_price * (1 + self.sl_percent)     # +0.5%
+            
+            take_profit = self.format_price(pair, take_profit)
+            stop_loss = self.format_price(pair, stop_loss)
+            
+            # Display trade details CLEARLY
+            direction_color = self.Fore.BLUE if direction == 'LONG' else self.Fore.RED
+            direction_icon = "📈" if direction == 'LONG' else "📉"
+            
+            self.print_color(f"\n🎯 LIVE TRADE EXECUTION DETAILS", self.Fore.CYAN + self.Style.BRIGHT)
+            self.print_color("=" * 60, self.Fore.CYAN)
+            self.print_color(f"{direction_icon} DIRECTION: {direction}", direction_color + self.Style.BRIGHT)
+            self.print_color(f"💰 PAIR: {pair}", self.Fore.WHITE)
+            self.print_color(f"💵 ENTRY PRICE: ${current_price:.4f}", self.Fore.GREEN)
+            self.print_color(f"📊 QUANTITY: {quantity}", self.Fore.WHITE)
+            self.print_color(f"🎯 TAKE PROFIT: ${take_profit:.4f} (+{self.tp_percent*100:.1f}%)", self.Fore.GREEN)
+            self.print_color(f"🛑 STOP LOSS: ${stop_loss:.4f} (-{self.sl_percent*100:.1f}%)", self.Fore.RED)
+            self.print_color(f"🤖 AI CONFIDENCE: {confidence}%", self.Fore.MAGENTA)
+            self.print_color(f"📝 REASON: {reason}", self.Fore.YELLOW)
+            self.print_color("=" * 60, self.Fore.CYAN)
+            
+            # Execute the trade
+            entry_side = 'BUY' if direction == 'LONG' else 'SELL'
+            try:
+                # Market entry order
+                order = self.binance.futures_create_order(
+                    symbol=pair,
+                    side=entry_side,
+                    type='MARKET',
+                    quantity=quantity
+                )
+                self.print_color(f"✅ {direction} ORDER EXECUTED SUCCESSFULLY!", self.Fore.GREEN + self.Style.BRIGHT)
+                time.sleep(2)
+                
+                # Place TP/SL orders
+                stop_side = 'SELL' if direction == 'LONG' else 'BUY'
+                
+                # Stop Loss order
+                self.binance.futures_create_order(
+                    symbol=pair,
+                    side=stop_side,
+                    type='STOP_MARKET',
+                    quantity=quantity,
+                    stopPrice=stop_loss,
+                    reduceOnly=True,
+                    timeInForce='GTC'
+                )
+                
+                # Take Profit order
+                self.binance.futures_create_order(
+                    symbol=pair,
+                    side=stop_side,
+                    type='TAKE_PROFIT_MARKET',
+                    quantity=quantity,
+                    stopPrice=take_profit,
+                    reduceOnly=True,
+                    timeInForce='GTC'
+                )
+                
+                self.print_color(f"✅ TP/SL ORDERS PLACED SUCCESSFULLY!", self.Fore.GREEN)
+                
+                # Record the trade
+                self.bot_opened_trades[pair] = {
+                    "pair": pair,
+                    "direction": direction,
+                    "entry_price": current_price,
+                    "quantity": quantity,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "entry_time": time.time(),
+                    "status": 'ACTIVE',
+                    'ai_confidence': confidence,
+                    'ai_reason': reason,
+                    'entry_time_th': self.get_thailand_time()
+                }
+                
+                self.print_color(f"🚀 LIVE TRADE ACTIVATED: {pair} {direction} {direction_icon}", self.Fore.GREEN + self.Style.BRIGHT)
+                return True
+                
+            except BinanceAPIException as e:
+                self.print_color(f"❌ Binance Error: {e}", self.Fore.RED)
+                return False
+            except Exception as e:
+                self.print_color(f"❌ Execution Error: {e}", self.Fore.RED)
+                return False
+            
+        except Exception as e:
+            self.print_color(f"❌ Trade failed: {e}", self.Fore.RED)
+            return False
+
+    def get_live_position_data(self, pair):
+        """Get real-time position data from Binance"""
+        try:
+            positions = self.binance.futures_position_information(symbol=pair)
+            for pos in positions:
+                if pos['symbol'] == pair and float(pos['positionAmt']) != 0:
+                    entry_price = float(pos.get('entryPrice', 0))
+                    quantity = abs(float(pos['positionAmt']))
+                    unrealized_pnl = float(pos.get('unRealizedProfit', 0))
+                    ticker = self.binance.futures_symbol_ticker(symbol=pair)
+                    current_price = float(ticker['price'])
+                    direction = "SHORT" if pos['positionAmt'].startswith('-') else "LONG"
+                    return {
+                        'direction': direction,
+                        'entry_price': entry_price,
+                        'quantity': quantity,
+                        'current_price': current_price,
+                        'unrealized_pnl': unrealized_pnl,
+                        'status': 'ACTIVE'
+                    }
+            return None
+        except Exception as e:
+            self.print_color(f"Error getting live data: {e}", self.Fore.RED)
+            return None
+
+    def monitor_positions(self):
+        """Monitor and display active positions"""
+        try:
+            for pair, trade in list(self.bot_opened_trades.items()):
+                if trade['status'] != 'ACTIVE':
+                    continue
+                
+                live_data = self.get_live_position_data(pair)
+                if not live_data:
+                    self.close_trade_with_cleanup(pair, trade)
+                    continue
+                    
+                # Display position status
+                direction_icon = "📈" if trade['direction'] == 'LONG' else "📉"
+                pnl_color = self.Fore.GREEN if live_data['unrealized_pnl'] >= 0 else self.Fore.RED
+                
+                self.print_color(f"\n📊 LIVE POSITION: {pair} {direction_icon}", self.Fore.CYAN)
+                self.print_color(f"   Direction: {trade['direction']} | Entry: ${trade['entry_price']:.4f}", self.Fore.WHITE)
+                self.print_color(f"   Current: ${live_data['current_price']:.4f} | P&L: ${live_data['unrealized_pnl']:.2f}", pnl_color)
+                self.print_color(f"   TP: ${trade['take_profit']:.4f} | SL: ${trade['stop_loss']:.4f}", self.Fore.YELLOW)
+                    
+        except Exception as e:
+            self.print_color(f"Monitoring error: {e}", self.Fore.RED)
+
+    def close_trade_with_cleanup(self, pair, trade):
+        """Close trade and cleanup orders"""
+        try:
+            # Cancel any open orders
+            open_orders = self.binance.futures_get_open_orders(symbol=pair)
+            canceled = 0
+            for order in open_orders:
+                if order['reduceOnly'] and order['symbol'] == pair:
+                    try:
+                        self.binance.futures_cancel_order(symbol=pair, orderId=order['orderId'])
+                        canceled += 1
+                    except Exception as e:
+                        self.print_color(f"Failed to cancel order {order['orderId']}: {e}", self.Fore.RED)
+            
+            # Get final P&L
+            final_pnl = self.get_final_pnl(pair, trade)
+            
+            # Record trade completion
+            trade['status'] = 'CLOSED'
+            trade['exit_time_th'] = self.get_thailand_time()
+            trade['exit_price'] = self.get_current_price(pair)
+            trade['pnl'] = final_pnl
+            
+            closed_trade = trade.copy()
+            self.add_trade_to_history(closed_trade)
+            
+            # Display closure
+            pnl_color = self.Fore.GREEN if final_pnl > 0 else self.Fore.RED
+            direction_icon = "📈" if trade['direction'] == 'LONG' else "📉"
+            self.print_color(f"\n🔚 TRADE CLOSED: {pair} {direction_icon} {trade['direction']}", pnl_color)
+            self.print_color(f"   Final P&L: ${final_pnl:.2f}", pnl_color)
+            if canceled > 0:
+                self.print_color(f"   Cleaned up {canceled} order(s)", self.Fore.CYAN)
+                
+        except Exception as e:
+            self.print_color(f"Cleanup failed for {pair}: {e}", self.Fore.RED)
+
+    def get_final_pnl(self, pair, trade):
+        """Calculate final P&L for closed trade"""
+        try:
+            live = self.get_live_position_data(pair)
+            if live and 'unrealized_pnl' in live:
+                return live['unrealized_pnl']
+            current = self.get_current_price(pair)
+            if not current:
+                return 0
+            if trade['direction'] == 'LONG':
+                return (current - trade['entry_price']) * trade['quantity']
+            else:
+                return (trade['entry_price'] - current) * trade['quantity']
+        except:
+            return 0
 
     def display_dashboard(self):
-        self.print_color(f"\n📊 3MIN SCALPING DASHBOARD - {self.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
+        """Display clear dashboard with all active positions"""
+        self.print_color(f"\n📊 LIVE TRADING DASHBOARD - {self.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
         self.print_color("=" * 80, self.Fore.CYAN)
-        self.print_color("💡 LIVE TRADING DISABLED - PAPER TRADING MODE", self.Fore.YELLOW)
-
-    def start_trading(self):
-        self.print_color("🚀 STARTING 3MIN SCALPING BOT!", self.Fore.CYAN + self.Style.BRIGHT)
-        self.cycle_count = 0
-        while True:
-            try:
-                self.cycle_count += 1
-                self.print_color(f"\n🔄 3MIN CYCLE {self.cycle_count}", self.Fore.CYAN)
-                self.print_color("=" * 50, self.Fore.CYAN)
-                self.run_trading_cycle()
-                self.print_color(f"⏰ Waiting 60 seconds for next 3MIN analysis...", self.Fore.BLUE)
-                time.sleep(60)  # Wait 60 seconds for 3-minute timeframe
-            except KeyboardInterrupt:
-                self.print_color(f"\n🛑 BOT STOPPED", self.Fore.RED + self.Style.BRIGHT)
-                self.show_trade_history(10)
-                break
-            except Exception as e:
-                self.print_color(f"Main loop error: {e}", self.Fore.RED)
-                time.sleep(60)
+        
+        active_count = 0
+        for pair, trade in self.bot_opened_trades.items():
+            if trade['status'] == 'ACTIVE':
+                active_count += 1
+                live_data = self.get_live_position_data(pair)
+                if live_data:
+                    direction_icon = "📈" if trade['direction'] == 'LONG' else "📉"
+                    pnl_color = self.Fore.GREEN if live_data['unrealized_pnl'] >= 0 else self.Fore.RED
+                    
+                    self.print_color(f"{direction_icon} {pair} {trade['direction']}", self.Fore.WHITE + self.Style.BRIGHT)
+                    self.print_color(f"   Entry: ${trade['entry_price']:.4f} | Current: ${live_data['current_price']:.4f}", self.Fore.WHITE)
+                    self.print_color(f"   P&L: ${live_data['unrealized_pnl']:.2f}", pnl_color)
+                    self.print_color(f"   TP: ${trade['take_profit']:.4f} | SL: ${trade['stop_loss']:.4f}", self.Fore.YELLOW)
+                    self.print_color("   " + "-" * 50, self.Fore.CYAN)
+        
+        if active_count == 0:
+            self.print_color("No active positions", self.Fore.YELLOW)
+        else:
+            self.print_color(f"Total Active Positions: {active_count}", self.Fore.CYAN)
 
     def run_trading_cycle(self):
+        """Main trading cycle with clear AI decisions"""
         try:
+            self.monitor_positions()
             self.display_dashboard()
             
             if hasattr(self, 'cycle_count') and self.cycle_count % 5 == 0:
@@ -497,17 +717,38 @@ class ThreeMinScalpingBot:
                             direction_icon = "📈" if decision['direction'] == "LONG" else "📉"
                             self.print_color(f"🚀 3MIN QUALIFIED: {pair} {decision['direction']} {direction_icon} ({decision['confidence']}%)", self.Fore.GREEN + self.Style.BRIGHT)
                             success = self.execute_trade(decision)
-                            if success:
-                                pass
                         else:
                             self.print_color(f"⏸️ 3MIN HOLD: {pair} ({decision['confidence']}%)", self.Fore.YELLOW)
                     else:
-                        self.print_color(f"↗️ 3MIN SKIPPED: {pair} (already active)", self.Fore.MAGENTA)
+                        self.print_color(f"↗️ 3MIN SKIPPED: {pair} (position limit reached)", self.Fore.MAGENTA)
             else:
                 self.print_color("No market data available", self.Fore.YELLOW)
                 
         except Exception as e:
             self.print_color(f"Trading cycle error: {e}", self.Fore.RED)
+
+    def start_trading(self):
+        """Start live trading with clear output"""
+        self.print_color("🚀 STARTING 3MIN LIVE TRADING BOT!", self.Fore.CYAN + self.Style.BRIGHT)
+        self.print_color("⚠️  REAL MONEY TRADING - BE CAREFUL!", self.Fore.RED + self.Style.BRIGHT)
+        self.cycle_count = 0
+        
+        while True:
+            try:
+                self.cycle_count += 1
+                self.print_color(f"\n🔄 LIVE TRADING CYCLE {self.cycle_count}", self.Fore.CYAN)
+                self.print_color("=" * 50, self.Fore.CYAN)
+                self.run_trading_cycle()
+                self.print_color(f"⏰ Waiting 60 seconds for next 3MIN analysis...", self.Fore.BLUE)
+                time.sleep(60)
+                
+            except KeyboardInterrupt:
+                self.print_color(f"\n🛑 LIVE TRADING STOPPED", self.Fore.RED + self.Style.BRIGHT)
+                self.show_trade_history(10)
+                break
+            except Exception as e:
+                self.print_color(f"Main loop error: {e}", self.Fore.RED)
+                time.sleep(60)
 
 
 class ThreeMinPaperTradingBot:
@@ -516,66 +757,59 @@ class ThreeMinPaperTradingBot:
         self.paper_balance = 1000
         self.paper_positions = {}
         self.paper_history = []
-        self.is_paper_trading = True
         
         self.real_bot.print_color("🤖 3MIN PAPER TRADING BOT INITIALIZED!", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
         self.real_bot.print_color(f"💰 Starting Paper Balance: ${self.paper_balance}", self.real_bot.Fore.CYAN)
         self.real_bot.print_color(f"🎯 Strategy: 3MIN Scalping | TP: +0.8% | SL: -0.5%", self.real_bot.Fore.MAGENTA)
         
     def paper_execute_trade(self, decision):
-        """AI decision ကို paper trade အဖြစ်အစားထိုးလုပ်မယ်"""
+        """Paper trading with clear display"""
         try:
             pair = decision["pair"]
             direction = decision["direction"]
-            confidence = decision["reason"]
+            confidence = decision["confidence"]
+            reason = decision["reason"]
             
-            # Real market price ကိုယူမယ်
             current_price = self.real_bot.get_current_price(pair)
-            
             if current_price <= 0:
                 return False
             
-            # Real bot ရဲ့ quantity calculation ကိုသုံးမယ်
             quantity = self.real_bot.get_quantity(pair, current_price)
             if quantity is None:
                 return False
             
-            # 3MIN SCALPING TP/SL
+            # Calculate TP/SL
             if direction == "LONG":
-                take_profit = current_price * (1 + self.real_bot.tp_percent)   # +0.8%
-                stop_loss = current_price * (1 - self.real_bot.sl_percent)     # -0.5%
-                tp_sl_ratio = f"TP: +{self.real_bot.tp_percent*100:.1f}% | SL: -{self.real_bot.sl_percent*100:.1f}%"
+                take_profit = current_price * (1 + self.real_bot.tp_percent)
+                stop_loss = current_price * (1 - self.real_bot.sl_percent)
             else:  # SHORT
-                take_profit = current_price * (1 - self.real_bot.tp_percent)   # -0.8%
-                stop_loss = current_price * (1 + self.real_bot.sl_percent)     # +0.5%
-                tp_sl_ratio = f"TP: -{self.real_bot.tp_percent*100:.1f}% | SL: +{self.real_bot.sl_percent*100:.1f}%"
+                take_profit = current_price * (1 - self.real_bot.tp_percent)
+                stop_loss = current_price * (1 + self.real_bot.sl_percent)
             
             take_profit = self.real_bot.format_price(pair, take_profit)
             stop_loss = self.real_bot.format_price(pair, stop_loss)
             
-            # Paper position ကို record လုပ်မယ်
-            self.paper_positions[pair] = {
-                "pair": pair,
-                "direction": direction,
-                "entry_price": current_price,
-                "quantity": quantity,
-                "stop_loss": stop_loss,
-                "take_profit": take_profit,
-                "entry_time": time.time(),
-                "status": 'ACTIVE',
-                'ai_confidence': confidence,
-                'entry_time_th': self.real_bot.get_thailand_time()
-            }
-            
-            # Real bot ရဲ့ display ကိုသုံးမယ်
+            # Display trade details clearly
             direction_color = self.real_bot.Fore.BLUE if direction == 'LONG' else self.real_bot.Fore.RED
             direction_icon = "📈" if direction == 'LONG' else "📉"
             
-            self.real_bot.print_color(f"📝 {direction_icon} 3MIN PAPER TRADE EXECUTED: {pair} {direction}", direction_color)
-            self.real_bot.print_color(f"   Size: {quantity} | Entry: ${current_price:.4f}", self.real_bot.Fore.WHITE)
-            self.real_bot.print_color(f"   TP: ${take_profit:.4f} | SL: ${stop_loss:.4f}", self.real_bot.Fore.YELLOW)
-            self.real_bot.print_color(f"   {tp_sl_ratio}", self.real_bot.Fore.CYAN)
-            self.real_bot.print_color(f"   AI Confidence: {confidence}%", self.real_bot.Fore.MAGENTA)
+            self.real_bot.print_color(f"\n🎯 PAPER TRADE EXECUTION", self.real_bot.Fore.CYAN + self.real_bot.Style.BRIGHT)
+            self.real_bot.print_color("=" * 60, self.real_bot.Fore.CYAN)
+            self.real_bot.print_color(f"{direction_icon} DIRECTION: {direction}", direction_color)
+            self.real_bot.print_color(f"💰 PAIR: {pair}", self.real_bot.Fore.WHITE)
+            self.real_bot.print_color(f"💵 ENTRY: ${current_price:.4f}", self.real_bot.Fore.GREEN)
+            self.real_bot.print_color(f"🎯 TP: ${take_profit:.4f}", self.real_bot.Fore.GREEN)
+            self.real_bot.print_color(f"🛑 SL: ${stop_loss:.4f}", self.real_bot.Fore.RED)
+            self.real_bot.print_color(f"🤖 CONFIDENCE: {confidence}%", self.real_bot.Fore.MAGENTA)
+            self.real_bot.print_color("=" * 60, self.real_bot.Fore.CYAN)
+            
+            # Record paper position
+            self.paper_positions[pair] = {
+                "pair": pair, "direction": direction, "entry_price": current_price,
+                "quantity": quantity, "stop_loss": stop_loss, "take_profit": take_profit,
+                "entry_time": time.time(), "status": 'ACTIVE', 'ai_confidence': confidence,
+                'entry_time_th': self.real_bot.get_thailand_time()
+            }
             
             return True
             
@@ -584,13 +818,12 @@ class ThreeMinPaperTradingBot:
             return False
 
     def monitor_paper_positions(self):
-        """Paper positions တွေကို monitor လုပ်မယ်"""
+        """Monitor paper positions with clear display"""
         try:
             for pair, trade in list(self.paper_positions.items()):
                 if trade['status'] != 'ACTIVE':
                     continue
                 
-                # Real market price ကိုယူမယ်
                 current_price = self.real_bot.get_current_price(pair)
                 if not current_price:
                     continue
@@ -620,188 +853,114 @@ class ThreeMinPaperTradingBot:
                         pnl = (trade['entry_price'] - current_price) * trade['quantity']
                 
                 if should_close:
-                    # Close the paper position
+                    # Close position
                     trade['status'] = 'CLOSED'
                     trade['exit_price'] = current_price
                     trade['pnl'] = pnl
                     trade['close_reason'] = close_reason
                     trade['close_time'] = self.real_bot.get_thailand_time()
                     
-                    # Update paper balance
                     self.paper_balance += pnl
-                    
-                    # Add to history
                     self.paper_history.append(trade.copy())
                     
-                    # Display result
+                    # Display closure clearly
                     pnl_color = self.real_bot.Fore.GREEN if pnl > 0 else self.real_bot.Fore.RED
                     direction_icon = "📈" if trade['direction'] == 'LONG' else "📉"
-                    self.real_bot.print_color(f"📊 {direction_icon} 3MIN PAPER TRADE CLOSED: {pair} {trade['direction']}", pnl_color)
-                    self.real_bot.print_color(f"   Exit: ${current_price:.4f} | P&L: ${pnl:.2f}", pnl_color)
-                    self.real_bot.print_color(f"   Reason: {close_reason}", self.real_bot.Fore.YELLOW)
+                    self.real_bot.print_color(f"\n🔚 PAPER TRADE CLOSED: {pair} {direction_icon}", pnl_color)
+                    self.real_bot.print_color(f"   P&L: ${pnl:.2f} | Reason: {close_reason}", pnl_color)
                     
-                    # Remove from active positions
                     del self.paper_positions[pair]
-                else:
-                    # Show unrealized P&L
-                    if trade['direction'] == 'LONG':
-                        unrealized_pnl = (current_price - trade['entry_price']) * trade['quantity']
-                    else:
-                        unrealized_pnl = (trade['entry_price'] - current_price) * trade['quantity']
-                    
-                    pnl_color = self.real_bot.Fore.GREEN if unrealized_pnl > 0 else self.real_bot.Fore.RED
-                    self.real_bot.print_color(f"   {pair} Unrealized P&L: ${unrealized_pnl:.2f}", pnl_color)
                     
         except Exception as e:
             self.real_bot.print_color(f"Paper monitoring error: {e}", self.real_bot.Fore.RED)
 
     def get_paper_portfolio_status(self):
-        """Paper trading portfolio status ပြမယ်"""
+        """Display portfolio status clearly"""
         total_trades = len(self.paper_history)
         winning_trades = len([t for t in self.paper_history if t.get('pnl', 0) > 0])
-        losing_trades = len([t for t in self.paper_history if t.get('pnl', 0) < 0])
         total_pnl = sum(trade.get('pnl', 0) for trade in self.paper_history)
         
-        # Calculate unrealized P&L
-        unrealized_total = 0
-        for pair, position in self.paper_positions.items():
-            current_price = self.real_bot.get_current_price(pair)
-            if current_price:
-                if position['direction'] == 'LONG':
-                    unrealized = (current_price - position['entry_price']) * position['quantity']
-                else:
-                    unrealized = (position['entry_price'] - current_price) * position['quantity']
-                unrealized_total += unrealized
-        
-        total_value = self.paper_balance + unrealized_total
-        
-        self.real_bot.print_color(f"\n💼 3MIN PAPER TRADING PORTFOLIO", self.real_bot.Fore.CYAN + self.real_bot.Style.BRIGHT)
+        self.real_bot.print_color(f"\n💼 PAPER TRADING PORTFOLIO", self.real_bot.Fore.CYAN + self.real_bot.Style.BRIGHT)
         self.real_bot.print_color("=" * 60, self.real_bot.Fore.CYAN)
         self.real_bot.print_color(f"Active Positions: {len(self.paper_positions)}", self.real_bot.Fore.WHITE)
-        self.real_bot.print_color(f"Paper Balance: ${self.paper_balance:.2f}", self.real_bot.Fore.WHITE)
-        self.real_bot.print_color(f"Unrealized P&L: ${unrealized_total:.2f}", 
-                                self.real_bot.Fore.GREEN if unrealized_total > 0 else self.real_bot.Fore.RED)
-        self.real_bot.print_color(f"Total Value: ${total_value:.2f}", self.real_bot.Fore.CYAN)
+        self.real_bot.print_color(f"Balance: ${self.paper_balance:.2f}", self.real_bot.Fore.WHITE)
         self.real_bot.print_color(f"Total Trades: {total_trades}", self.real_bot.Fore.WHITE)
         
         if total_trades > 0:
             win_rate = (winning_trades / total_trades) * 100
-            self.real_bot.print_color(f"Win Rate: {win_rate:.1f}%", 
-                                    self.real_bot.Fore.GREEN if win_rate > 50 else self.real_bot.Fore.YELLOW)
-            self.real_bot.print_color(f"Total P&L: ${total_pnl:.2f}", 
-                                    self.real_bot.Fore.GREEN if total_pnl > 0 else self.real_bot.Fore.RED)
-            avg_trade_pnl = total_pnl / total_trades
-            self.real_bot.print_color(f"Avg Trade P&L: ${avg_trade_pnl:.2f}", 
-                                    self.real_bot.Fore.GREEN if avg_trade_pnl > 0 else self.real_bot.Fore.RED)
-
-    def show_paper_trade_history(self, limit=10):
-        """Paper trade history ပြမယ်"""
-        if not self.paper_history:
-            self.real_bot.print_color("No paper trade history found", self.real_bot.Fore.YELLOW)
-            return
-            
-        self.real_bot.print_color(f"\n📋 3MIN PAPER TRADE HISTORY (Last {min(limit, len(self.paper_history))} trades)", self.real_bot.Fore.CYAN)
-        self.real_bot.print_color("=" * 90, self.real_bot.Fore.CYAN)
-        
-        for i, trade in enumerate(reversed(self.paper_history[-limit:])):
-            pnl = trade.get('pnl', 0)
-            pnl_color = self.real_bot.Fore.GREEN if pnl > 0 else self.real_bot.Fore.RED if pnl < 0 else self.real_bot.Fore.YELLOW
-            direction_icon = "📈" if trade['direction'] == 'LONG' else "📉"
-            
-            self.real_bot.print_color(f"{i+1}. {direction_icon} {trade['pair']} {trade['direction']} | Entry: ${trade.get('entry_price', 0):.4f} | Exit: ${trade.get('exit_price', 0):.4f} | P&L: ${pnl:.2f}", pnl_color)
-            self.real_bot.print_color(f"   TP: ${trade.get('take_profit', 0):.4f} | SL: ${trade.get('stop_loss', 0):.4f} | Reason: {trade.get('close_reason', 'N/A')}", self.real_bot.Fore.YELLOW)
+            self.real_bot.print_color(f"Win Rate: {win_rate:.1f}%", self.real_bot.Fore.GREEN if win_rate > 50 else self.real_bot.Fore.YELLOW)
+            self.real_bot.print_color(f"Total P&L: ${total_pnl:.2f}", self.real_bot.Fore.GREEN if total_pnl > 0 else self.real_bot.Fore.RED)
 
     def run_paper_trading_cycle(self):
-        """3MIN AI paper trading cycle"""
+        """Paper trading cycle with clear output"""
         try:
-            # Monitor existing paper positions
             self.monitor_paper_positions()
             
-            # Get AI decisions for all pairs
             market_data = self.real_bot.get_market_data()
             if market_data:
-                self.real_bot.print_color(f"\n🤖 3MIN AI SCANNING {len(market_data)} PAIRS...", self.real_bot.Fore.BLUE + self.real_bot.Style.BRIGHT)
+                self.real_bot.print_color(f"\n🤖 3MIN AI SCANNING FOR PAPER TRADES...", self.real_bot.Fore.BLUE + self.real_bot.Style.BRIGHT)
                 
                 for pair in market_data.keys():
-                    # Check if we can open new paper position
                     if pair not in self.paper_positions and len(self.paper_positions) < self.real_bot.max_concurrent_trades:
                         pair_data = {pair: market_data[pair]}
                         decision = self.real_bot.get_ai_decision(pair_data)
                         
                         if decision["action"] == "TRADE":
                             direction_icon = "📈" if decision['direction'] == "LONG" else "📉"
-                            self.real_bot.print_color(f"🎯 3MIN AI PAPER SIGNAL: {pair} {decision['direction']} {direction_icon} ({decision['confidence']}%)", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
+                            self.real_bot.print_color(f"🎯 3MIN AI SIGNAL: {pair} {decision['direction']} {direction_icon}", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
                             self.paper_execute_trade(decision)
-                        else:
-                            self.real_bot.print_color(f"⏸️ 3MIN AI HOLD: {pair} ({decision['confidence']}%)", self.real_bot.Fore.YELLOW)
-                    else:
-                        if pair in self.paper_positions:
-                            direction_icon = "📈" if self.paper_positions[pair]['direction'] == 'LONG' else "📉"
-                            self.real_bot.print_color(f"↗️ 3MIN ACTIVE PAPER POSITION: {pair} {direction_icon}", self.real_bot.Fore.MAGENTA)
             
-            # Show portfolio status
             self.get_paper_portfolio_status()
             
         except Exception as e:
-            self.real_bot.print_color(f"3MIN Paper trading cycle error: {e}", self.real_bot.Fore.RED)
+            self.real_bot.print_color(f"Paper trading error: {e}", self.real_bot.Fore.RED)
 
     def start_paper_trading(self):
-        """Start 3MIN AI paper trading"""
-        self.real_bot.print_color("🚀 STARTING 3MIN AI PAPER TRADING BOT!", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
-        self.real_bot.print_color("📝 3MIN CHART ANALYSIS + PAPER EXECUTION", self.real_bot.Fore.CYAN)
+        """Start paper trading"""
+        self.real_bot.print_color("🚀 STARTING 3MIN PAPER TRADING!", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
         self.real_bot.print_color("💰 NO REAL MONEY AT RISK", self.real_bot.Fore.GREEN)
-        self.real_bot.print_color(f"🎯 TP: +{self.real_bot.tp_percent*100:.1f}% | SL: -{self.real_bot.sl_percent*100:.1f}%", self.real_bot.Fore.MAGENTA)
         
         cycle_count = 0
         while True:
             try:
                 cycle_count += 1
-                self.real_bot.print_color(f"\n🔄 3MIN PAPER TRADING CYCLE {cycle_count}", self.real_bot.Fore.CYAN)
+                self.real_bot.print_color(f"\n🔄 PAPER CYCLE {cycle_count}", self.real_bot.Fore.CYAN)
                 self.real_bot.print_color("=" * 50, self.real_bot.Fore.CYAN)
-                
                 self.run_paper_trading_cycle()
-                
-                # Show history every 10 cycles
-                if cycle_count % 10 == 0:
-                    self.show_paper_trade_history(5)
-                
-                self.real_bot.print_color(f"⏰ Waiting 60 seconds for next 3MIN analysis...", self.real_bot.Fore.BLUE)
-                time.sleep(60)  # Wait 60 seconds for 3-minute timeframe
+                self.real_bot.print_color(f"⏰ Waiting 60 seconds...", self.real_bot.Fore.BLUE)
+                time.sleep(60)
                 
             except KeyboardInterrupt:
-                self.real_bot.print_color(f"\n🛑 3MIN PAPER TRADING STOPPED", self.real_bot.Fore.RED + self.real_bot.Style.BRIGHT)
-                self.show_paper_trade_history(10)
+                self.real_bot.print_color(f"\n🛑 PAPER TRADING STOPPED", self.real_bot.Fore.RED + self.real_bot.Style.BRIGHT)
                 break
             except Exception as e:
-                self.real_bot.print_color(f"3MIN Paper trading error: {e}", self.real_bot.Fore.RED)
+                self.real_bot.print_color(f"Paper trading error: {e}", self.real_bot.Fore.RED)
                 time.sleep(60)
 
 
 if __name__ == "__main__":
     try:
-        # Real bot ကိုတည်ဆောက်မယ်
         real_bot = ThreeMinScalpingBot()
         
         print("\n" + "="*60)
         print("🤖 3MIN AI SCALPING BOT")
         print("="*60)
         print("SELECT TRADING MODE:")
-        print("1. 🔴 Live Trading (Real Money - RISKY)")
-        print("2. 🟢 3MIN Paper Trading (RECOMMENDED - NO RISK)")
+        print("1. 🔴 Live Trading (Real Money)")
+        print("2. 🟢 Paper Trading (No Risk)")
         
         choice = input("Enter choice (1-2): ").strip()
         
         if choice == "1":
-            print("⚠️  WARNING: You are using REAL MONEY!")
+            print("⚠️  WARNING: REAL MONEY TRADING!")
             confirm = input("Type 'YES' to confirm: ").strip()
             if confirm.upper() == 'YES':
                 real_bot.start_trading()
             else:
-                print("Using 3MIN Paper Trading mode instead...")
+                print("Using Paper Trading mode...")
                 paper_bot = ThreeMinPaperTradingBot(real_bot)
                 paper_bot.start_paper_trading()
         else:
-            # Default to 3MIN Paper Trading
             paper_bot = ThreeMinPaperTradingBot(real_bot)
             paper_bot.start_paper_trading()
             
