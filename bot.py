@@ -40,7 +40,7 @@ class RealOrderPositionTracker:
         self.leverage = 5
         
         # Multi-pair parameters
-        self.max_concurrent_trades = 1
+        self.max_concurrent_trades = 3
         self.available_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
         
         # Track both bot-opened and existing positions
@@ -179,7 +179,7 @@ class RealOrderPositionTracker:
 
             # Fixed quantities
             fixed_quantities = {
-                "SOLUSDT": 0.3, "AVAXUSDT": 2.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
+                "SOLUSDT": 0.3, "AVAXUSDT": 3.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
             }
             quantity = fixed_quantities.get(pair)
             
