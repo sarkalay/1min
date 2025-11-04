@@ -11,9 +11,8 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import pytz
 import pandas as pd
-from collections import defaultdict
 
-# Install required packages first: 
+# Install required packages:
 # pip install colorama python-binance python-dotenv numpy pytz pandas
 
 try:
@@ -196,7 +195,7 @@ class Final1MinScalpingBot:
         except Exception as e:
             return None
 
-    # === BACKTEST FUNCTION ===
+    # === BACKTEST FUNCTION (FIXED) ===
     def run_backtest(self, days=7):
         self.print_color(f"\nBACKTESTING 1MIN SCALPING STRATEGY...", Fore.CYAN + Style.BRIGHT)
         self.print_color(f"Period: Last {days} days | Pairs: {len(self.available_pairs)}", Fore.YELLOW)
@@ -223,9 +222,22 @@ class Final1MinScalpingBot:
                     self.print_color(f"Not enough data for {pair}", Fore.YELLOW)
                     continue
                 
-                df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_asset_volume', 'number_of_trades', 'taker_buy_base', 'taker_buy_quote', 'ignore'])
-                df['close'] = df['close'].astype(float)
-                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                df = pd.DataFrame(klines, columns=[
+                    'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                    'close_time', 'quote_asset_volume', 'number_of_trades',
+                    'taker_buy_base', 'taker_buy_quote', 'ignore'
+                ])
+                
+                # FIX: Convert ALL price columns to float
+                price_cols = ['open', 'high', 'low', 'close', 'volume']
+                for col in price_cols:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                
+                df = df.dropna(subset=price_cols)
+                
+                if len(df) < 50:
+                    self.print_color(f"Insufficient clean data for {pair}", Fore.YELLOW)
+                    continue
                 
                 trades = []
                 active_trade = None
@@ -324,9 +336,6 @@ class Final1MinScalpingBot:
         return results
 
     # === LIVE TRADING FUNCTIONS (unchanged) ===
-    # [All previous functions: get_deepseek_analysis, execute_trade, etc.]
-    # (Omitted for brevity — same as previous version)
-
     def get_deepseek_analysis(self, pair, market_data):
         try:
             if not self.deepseek_key:
@@ -366,8 +375,8 @@ class Final1MinScalpingBot:
             return "HOLD", 0, "Error"
 
     def execute_trade(self, decision):
-        # [Same as previous version]
-        pass  # (Full code same as before)
+        # [Full live trading code - same as before]
+        pass  # (Use previous version)
 
     def start_trading(self):
         self.print_color("STARTING FINAL 1MIN SCALPING BOT!", Fore.CYAN + Style.BRIGHT)
