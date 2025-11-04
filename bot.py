@@ -681,13 +681,19 @@ class OneMinScalpingBot:
 class OneMinPaperTradingBot:
     def __init__(self, real_bot):
         self.real_bot = real_bot
+        # FIX: Copy colorama attributes from real_bot
+        self.Fore = real_bot.Fore
+        self.Back = real_bot.Back
+        self.Style = real_bot.Style
+        self.COLORAMA_AVAILABLE = real_bot.COLORAMA_AVAILABLE
+        
         self.paper_balance = 1000
         self.paper_positions = {}
         self.paper_history = []
         
-        self.real_bot.print_color("1MIN PAPER TRADING BOT INITIALIZED!", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
-        self.real_bot.print_color(f"Starting Paper Balance: ${self.paper_balance}", self.real_bot.Fore.CYAN)
-        self.real_bot.print_color(f"Strategy: 1MIN Scalping | TP: +0.8% | SL: -0.5%", self.real_bot.Fore.MAGENTA)
+        self.real_bot.print_color("1MIN PAPER TRADING BOT INITIALIZED!", self.Fore.GREEN + self.Style.BRIGHT)
+        self.real_bot.print_color(f"Starting Paper Balance: ${self.paper_balance}", self.Fore.CYAN)
+        self.real_bot.print_color(f"Strategy: 1MIN Scalping | TP: +0.8% | SL: -0.5%", self.Fore.MAGENTA)
         
     def paper_execute_trade(self, decision):
         try:
@@ -714,18 +720,18 @@ class OneMinPaperTradingBot:
             take_profit = self.real_bot.format_price(pair, take_profit)
             stop_loss = self.real_bot.format_price(pair, stop_loss)
             
-            direction_color = self.real_bot.Fore.BLUE if direction == 'LONG' else self.real_bot.Fore.RED
+            direction_color = self.Fore.BLUE if direction == 'LONG' else self.Fore.RED
             direction_icon = "LONG" if direction == 'LONG' else "SHORT"
             
-            self.real_bot.print_color(f"\nPAPER TRADE EXECUTION", self.real_bot.Fore.CYAN + self.Style.BRIGHT)
-            self.real_bot.print_color("=" * 60, self.real_bot.Fore.CYAN)
+            self.real_bot.print_color(f"\nPAPER TRADE EXECUTION", self.Fore.CYAN + self.Style.BRIGHT)
+            self.real_bot.print_color("=" * 60, self.Fore.CYAN)
             self.real_bot.print_color(f"{direction_icon} DIRECTION: {direction}", direction_color)
-            self.real_bot.print_color(f"PAIR: {pair}", self.real_bot.Fore.WHITE)
-            self.real_bot.print_color(f"ENTRY (AI): ${entry_price:.4f}", self.real_bot.Fore.GREEN)
-            self.real_bot.print_color(f"TP: ${take_profit:.4f}", self.real_bot.Fore.GREEN)
-            self.real_bot.print_color(f"SL: ${stop_loss:.4f}", self.real_bot.Fore.RED)
-            self.real_bot.print_color(f"CONFIDENCE: {confidence}%", self.real_bot.Fore.MAGENTA)
-            self.real_bot.print_color("=" * 60, self.real_bot.Fore.CYAN)
+            self.real_bot.print_color(f"PAIR: {pair}", self.Fore.WHITE)
+            self.real_bot.print_color(f"ENTRY (AI): ${entry_price:.4f}", self.Fore.GREEN)
+            self.real_bot.print_color(f"TP: ${take_profit:.4f}", self.Fore.GREEN)
+            self.real_bot.print_color(f"SL: ${stop_loss:.4f}", self.Fore.RED)
+            self.real_bot.print_color(f"CONFIDENCE: {confidence}%", self.Fore.MAGENTA)
+            self.real_bot.print_color("=" * 60, self.Fore.CYAN)
             
             self.paper_positions[pair] = {
                 "pair": pair, "direction": direction, "entry_price": entry_price,
@@ -737,7 +743,7 @@ class OneMinPaperTradingBot:
             return True
             
         except Exception as e:
-            self.real_bot.print_color(f"Paper trade failed: {e}", self.real_bot.Fore.RED)
+            self.real_bot.print_color(f"Paper trade failed: {e}", self.Fore.RED)
             return False
 
     def monitor_paper_positions(self):
@@ -783,7 +789,7 @@ class OneMinPaperTradingBot:
                     self.paper_balance += pnl
                     self.paper_history.append(trade.copy())
                     
-                    pnl_color = self.real_bot.Fore.GREEN if pnl > 0 else self.real_bot.Fore.RED
+                    pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
                     direction_icon = "LONG" if trade['direction'] == 'LONG' else "SHORT"
                     self.real_bot.print_color(f"\nPAPER TRADE CLOSED: {pair} {direction_icon}", pnl_color)
                     self.real_bot.print_color(f"   P&L: ${pnl:.2f} | Reason: {close_reason}", pnl_color)
@@ -791,23 +797,23 @@ class OneMinPaperTradingBot:
                     del self.paper_positions[pair]
                     
         except Exception as e:
-            self.real_bot.print_color(f"Paper monitoring error: {e}", self.real_bot.Fore.RED)
+            self.real_bot.print_color(f"Paper monitoring error: {e}", self.Fore.RED)
 
     def get_paper_portfolio_status(self):
         total_trades = len(self.paper_history)
         winning_trades = len([t for t in self.paper_history if t.get('pnl', 0) > 0])
         total_pnl = sum(trade.get('pnl', 0) for trade in self.paper_history)
         
-        self.real_bot.print_color(f"\nPAPER TRADING PORTFOLIO", self.real_bot.Fore.CYAN + self.Style.BRIGHT)
-        self.real_bot.print_color("=" * 60, self.real_bot.Fore.CYAN)
-        self.real_bot.print_color(f"Active Positions: {len(self.paper_positions)}", self.real_bot.Fore.WHITE)
-        self.real_bot.print_color(f"Balance: ${self.paper_balance:.2f}", self.real_bot.Fore.WHITE)
-        self.real_bot.print_color(f"Total Trades: {total_trades}", self.real_bot.Fore.WHITE)
+        self.real_bot.print_color(f"\nPAPER TRADING PORTFOLIO", self.Fore.CYAN + self.Style.BRIGHT)
+        self.real_bot.print_color("=" * 60, self.Fore.CYAN)
+        self.real_bot.print_color(f"Active Positions: {len(self.paper_positions)}", self.Fore.WHITE)
+        self.real_bot.print_color(f"Balance: ${self.paper_balance:.2f}", self.Fore.WHITE)
+        self.real_bot.print_color(f"Total Trades: {total_trades}", self.Fore.WHITE)
         
         if total_trades > 0:
             win_rate = (winning_trades / total_trades) * 100
-            self.real_bot.print_color(f"Win Rate: {win_rate:.1f}%", self.real_bot.Fore.GREEN if win_rate > 50 else self.real_bot.Fore.YELLOW)
-            self.real_bot.print_color(f"Total P&L: ${total_pnl:.2f}", self.real_bot.Fore.GREEN if total_pnl > 0 else self.real_bot.Fore.RED)
+            self.real_bot.print_color(f"Win Rate: {win_rate:.1f}%", self.Fore.GREEN if win_rate > 50 else self.Fore.YELLOW)
+            self.real_bot.print_color(f"Total P&L: ${total_pnl:.2f}", self.Fore.GREEN if total_pnl > 0 else self.Fore.RED)
 
     def run_paper_trading_cycle(self):
         try:
@@ -815,7 +821,7 @@ class OneMinPaperTradingBot:
             
             market_data = self.real_bot.get_market_data()
             if market_data:
-                self.real_bot.print_color(f"\n1MIN AI SCANNING FOR PAPER TRADES...", self.real_bot.Fore.BLUE + self.Style.BRIGHT)
+                self.real_bot.print_color(f"\n1MIN AI SCANNING FOR PAPER TRADES...", self.Fore.BLUE + self.Style.BRIGHT)
                 
                 for pair in market_data.keys():
                     if pair not in self.paper_positions and len(self.paper_positions) < self.real_bot.max_concurrent_trades:
@@ -824,35 +830,34 @@ class OneMinPaperTradingBot:
                         
                         if decision["action"] == "TRADE":
                             direction_icon = "LONG" if decision['direction'] == "LONG" else "SHORT"
-                            self.real_bot.print_color(f"1MIN AI SIGNAL: {pair} {decision['direction']} {direction_icon}", self.real_bot.Fore.GREEN + self.Style.BRIGHT)
+                            self.real_bot.print_color(f"1MIN AI SIGNAL: {pair} {decision['direction']} {direction_icon}", self.Fore.GREEN + self.Style.BRIGHT)
                             self.paper_execute_trade(decision)
             
             self.get_paper_portfolio_status()
             
         except Exception as e:
-            self.real_bot.print_color(f"Paper trading error: {e}", self.real_bot.Fore.RED)
+            self.real_bot.print_color(f"Paper trading error: {e}", self.Fore.RED)
 
     def start_paper_trading(self):
-        self.real_bot.print_color("STARTING 1MIN PAPER TRADING!", self.real_bot.Fore.GREEN + self.Style.BRIGHT)
-        self.real_bot.print_color("NO REAL MONEY AT RISK", self.real_bot.Fore.GREEN)
+        self.real_bot.print_color("STARTING 1MIN PAPER TRADING!", self.Fore.GREEN + self.Style.BRIGHT)
+        self.real_bot.print_color("NO REAL MONEY AT RISK", self.Fore.GREEN)
         
         cycle_count = 0
         while True:
             try:
                 cycle_count += 1
-                self.real_bot.print_color(f"\nPAPER CYCLE {cycle_count}", self.real_bot.Fore.CYAN)
-                self.real_bot.print_color("=" * 50, self.real_bot.Fore.CYAN)
+                self.real_bot.print_color(f"\nPAPER CYCLE {cycle_count}", self.Fore.CYAN)
+                self.real_bot.print_color("=" * 50, self.Fore.CYAN)
                 self.run_paper_trading_cycle()
-                self.real_bot.print_color(f"Waiting 30 seconds...", self.real_bot.Fore.BLUE)
+                self.real_bot.print_color(f"Waiting 30 seconds...", self.Fore.BLUE)
                 time.sleep(30)
                 
             except KeyboardInterrupt:
-                self.real_bot.print_color(f"\nPAPER TRADING STOPPED", self.real_bot.Fore.RED + self.Style.BRIGHT)
+                self.real_bot.print_color(f"\nPAPER TRADING STOPPED", self.Fore.RED + self.Style.BRIGHT)
                 break
             except Exception as e:
-                self.real_bot.print_color(f"Paper trading error: {e}", self.real_bot.Fore.RED)
+                self.real_bot.print_color(f"Paper trading error: {e}", self.Fore.RED)
                 time.sleep(30)
-
 
 if __name__ == "__main__":
     try:
