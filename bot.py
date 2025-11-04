@@ -33,7 +33,7 @@ if not COLORAMA_AVAILABLE:
     Back = DummyColors() 
     Style = DummyColors()
 
-class RealOrderPositionTracker:
+class ThreeMinScalpingBot:
     def __init__(self):
         # Load config from .env file
         self.binance_api_key = os.getenv('BINANCE_API_KEY')
@@ -49,19 +49,21 @@ class RealOrderPositionTracker:
         # Thailand timezone
         self.thailand_tz = pytz.timezone('Asia/Bangkok')
         
-        # SCALPING parameters
+        # 3MIN SCALPING PARAMETERS
         self.trade_size_usd = 50
         self.leverage = 5
+        self.tp_percent = 0.008   # +0.8%
+        self.sl_percent = 0.005   # -0.5%
         
         # Multi-pair parameters
-        self.max_concurrent_trades = 4
+        self.max_concurrent_trades = 2
         self.available_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
         
         # Track bot-opened trades only
         self.bot_opened_trades = {}
         
         # Trade history
-        self.trade_history_file = "trade_history.json"
+        self.trade_history_file = "3min_scalping_history.json"
         self.trade_history = self.load_trade_history()
         
         # Precision settings
@@ -71,9 +73,10 @@ class RealOrderPositionTracker:
         # Initialize Binance client
         try:
             self.binance = Client(self.binance_api_key, self.binance_secret)
-            self.print_color(f"FINAL AI ALWAYS SCAN BOT ACTIVATED!", self.Fore.CYAN + self.Style.BRIGHT)
-            self.print_color(f"Trade Size: ${self.trade_size_usd} | Leverage: {self.leverage}x", self.Fore.GREEN)
-            self.print_color(f"Max Trades: {self.max_concurrent_trades} | AI: ALWAYS ON", self.Fore.YELLOW)
+            self.print_color(f"🎯 3MIN SCALPING BOT ACTIVATED!", self.Fore.CYAN + self.Style.BRIGHT)
+            self.print_color(f"TP: +0.8% | SL: -0.5% | R:R = 1.6", self.Fore.GREEN)
+            self.print_color(f"Trade Size: ${self.trade_size_usd} | Leverage: {self.leverage}x", self.Fore.YELLOW)
+            self.print_color(f"Chart: 3MIN | Max Trades: {self.max_concurrent_trades}", self.Fore.MAGENTA)
         except Exception as e:
             self.print_color(f"Binance initialization failed: {e}", self.Fore.RED)
             # Create dummy client for paper trading
@@ -117,12 +120,13 @@ class RealOrderPositionTracker:
         if not self.trade_history:
             self.print_color("No trade history found", self.Fore.YELLOW)
             return
-        self.print_color(f"\nTRADE HISTORY (Last {min(limit, len(self.trade_history))} trades)", self.Fore.CYAN)
-        self.print_color("=" * 80, self.Fore.CYAN)
+        self.print_color(f"\n📋 3MIN SCALPING HISTORY (Last {min(limit, len(self.trade_history))} trades)", self.Fore.CYAN)
+        self.print_color("=" * 90, self.Fore.CYAN)
         for i, trade in enumerate(reversed(self.trade_history[-limit:])):
             pnl = trade.get('pnl', 0)
             pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED if pnl < 0 else self.Fore.YELLOW
-            self.print_color(f"{i+1}. {trade['pair']} {trade['direction']} | Entry: ${trade.get('entry_price', 0):.4f} | Exit: ${trade.get('exit_price', 0):.4f} | P&L: ${pnl:.2f}", pnl_color)
+            direction_icon = "📈" if trade['direction'] == 'LONG' else "📉"
+            self.print_color(f"{i+1}. {direction_icon} {trade['pair']} {trade['direction']} | Entry: ${trade.get('entry_price', 0):.4f} | Exit: ${trade.get('exit_price', 0):.4f} | P&L: ${pnl:.2f}", pnl_color)
             self.print_color(f"   TP: ${trade.get('take_profit', 0):.4f} | SL: ${trade.get('stop_loss', 0):.4f} | Time: {trade.get('close_time', 'N/A')}", self.Fore.YELLOW)
     
     def get_thailand_time(self):
@@ -208,7 +212,7 @@ class RealOrderPositionTracker:
                 return None
 
             fixed_quantities = {
-                "SOLUSDT": 0.3, "AVAXUSDT": 3.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
+                "SOLUSDT": 0.3, "AVAXUSDT": 2.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
             }
             quantity = fixed_quantities.get(pair)
             
@@ -259,49 +263,38 @@ class RealOrderPositionTracker:
             
             current_price = market_data['current_price']
             
-            # Improved prompt for balanced LONG/SHORT analysis
+            # 3-minute scalping focused prompt
             prompt = f"""
             Analyze {pair} for 3-minute scalping trading. Current price: ${current_price:.4f}
             
-            IMPORTANT: Provide OBJECTIVE analysis considering both BULLISH and BEARISH scenarios equally.
+            Timeframe: 3-minute charts
+            Strategy: Quick scalping
+            Holding time: 3-10 minutes
+            Target: +0.8% profit
+            Stop Loss: -0.5%
             
-            Technical Analysis Framework:
-            1. Price Action: Look for breakouts, rejections, consolidation patterns
-            2. Momentum: Check if price is accelerating up or down
-            3. Market Structure: Identify key support/resistance levels
-            4. Volatility: Assess if market conditions favor quick scalps
+            Provide your trading recommendation based on your analysis of the 3-minute chart.
             
-            Trading Parameters:
-            - Target: +0.8% profit
-            - Stop Loss: -0.5%
-            - Timeframe: 1-3 minutes hold
-            - Strategy: Quick momentum scalping
-            
-            CRITICAL: Be completely objective. If bullish signals are stronger, recommend LONG. 
-            If bearish signals are stronger, recommend SHORT. If unclear, recommend HOLD.
-            
-            Respond with this exact JSON format only:
+            Respond with this JSON format only:
             {{
                 "direction": "LONG|SHORT|HOLD",
                 "confidence": 0-100,
-                "reason": "Specific technical reason based on price action"
+                "reason": "Your analysis reason for 3-minute timeframe"
             }}
-            
-            Make sure to consider SHORT opportunities equally to LONG opportunities.
             """
             
             headers = {"Authorization": f"Bearer {self.deepseek_key}", "Content-Type": "application/json"}
             data = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": "You are a professional crypto trader. Analyze markets OBJECTIVELY. Consider both LONG and SHORT opportunities EQUALLY. Provide balanced recommendations based purely on technical analysis. Respond with valid JSON only."},
+                    {"role": "system", "content": "You are a crypto scalping specialist. Analyze 3-minute charts for quick trading opportunities. Respond with valid JSON only."},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.4,  # Balanced temperature for varied but reasonable responses
-                "max_tokens": 500
+                "temperature": 0.3,
+                "max_tokens": 300
             }
             
-            self.print_color(f"🤖 AI Analyzing {pair}...", self.Fore.MAGENTA)
+            self.print_color(f"🤖 AI Analyzing {pair} on 3MIN chart...", self.Fore.MAGENTA)
             response = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=data, timeout=30)
             
             if response.status_code == 200:
@@ -312,7 +305,7 @@ class RealOrderPositionTracker:
                 # Log the AI decision with icons
                 direction_icon = "📈" if direction == "LONG" else "📉" if direction == "SHORT" else "⏸️"
                 color = self.Fore.BLUE if direction == "LONG" else self.Fore.RED if direction == "SHORT" else self.Fore.YELLOW
-                self.print_color(f"{direction_icon} AI Decision: {direction} ({confidence}%) - {reason}", color)
+                self.print_color(f"{direction_icon} 3MIN AI: {direction} ({confidence}%) - {reason}", color)
                 return direction, confidence, reason
             else:
                 self.print_color(f"DeepSeek API error: {response.status_code}", self.Fore.RED)
@@ -322,19 +315,32 @@ class RealOrderPositionTracker:
             self.print_color(f"DeepSeek analysis failed: {e}", self.Fore.RED)
             return "HOLD", 0, f"Error"
 
-    def get_price_history(self, pair, limit=10):
+    def get_price_history(self, pair, limit=20):
         try:
             if self.binance:
-                klines = self.binance.futures_klines(symbol=pair, interval=Client.KLINE_INTERVAL_1MINUTE, limit=limit)
-                prices = [float(k[4]) for k in klines]
-                return {'prices': prices, 'current_price': prices[-1] if prices else 0}
+                # Use 3-minute interval
+                klines = self.binance.futures_klines(symbol=pair, interval=Client.KLINE_INTERVAL_3MINUTE, limit=limit)
+                prices = [float(k[4]) for k in klines]  # Closing prices
+                highs = [float(k[2]) for k in klines]   # High prices
+                lows = [float(k[3]) for k in klines]    # Low prices
+                return {
+                    'prices': prices, 
+                    'highs': highs,
+                    'lows': lows,
+                    'current_price': prices[-1] if prices else 0
+                }
             else:
                 # For paper trading, get real price data
                 try:
                     ticker = self.binance.futures_symbol_ticker(symbol=pair) if self.binance else None
                     if ticker:
                         current_price = float(ticker['price'])
-                        return {'prices': [current_price] * 5, 'current_price': current_price}
+                        return {
+                            'prices': [current_price] * 10, 
+                            'highs': [current_price * 1.01] * 10,
+                            'lows': [current_price * 0.99] * 10,
+                            'current_price': current_price
+                        }
                 except:
                     pass
                 # Fallback to realistic prices
@@ -343,17 +349,37 @@ class RealOrderPositionTracker:
                     "LINKUSDT": 18.75, "DOTUSDT": 8.90
                 }
                 current_price = base_prices.get(pair, 100)
-                return {'prices': [current_price] * 5, 'current_price': current_price}
+                return {
+                    'prices': [current_price] * 10,
+                    'highs': [current_price * 1.01] * 10,
+                    'lows': [current_price * 0.99] * 10,
+                    'current_price': current_price
+                }
         except Exception as e:
             try:
                 if self.binance:
                     ticker = self.binance.futures_symbol_ticker(symbol=pair)
                     current_price = float(ticker['price'])
-                    return {'prices': [current_price] * 5, 'current_price': current_price}
+                    return {
+                        'prices': [current_price] * 10,
+                        'highs': [current_price * 1.01] * 10,
+                        'lows': [current_price * 0.99] * 10,
+                        'current_price': current_price
+                    }
                 else:
-                    return {'prices': [100], 'current_price': 100}
+                    return {
+                        'prices': [100] * 10,
+                        'highs': [101] * 10,
+                        'lows': [99] * 10,
+                        'current_price': 100
+                    }
             except:
-                return {'prices': [], 'current_price': 0}
+                return {
+                    'prices': [],
+                    'highs': [],
+                    'lows': [],
+                    'current_price': 0
+                }
 
     def get_ai_decision(self, pair_data):
         try:
@@ -362,18 +388,18 @@ class RealOrderPositionTracker:
             if current_price <= 0:
                 return {"action": "HOLD", "pair": pair, "direction": "HOLD", "confidence": 0, "reason": "Invalid price"}
             
-            self.print_color(f"🔍 Analyzing {pair} at ${current_price:.4f}...", self.Fore.BLUE)
+            self.print_color(f"🔍 Analyzing {pair} at ${current_price:.4f} (3MIN)...", self.Fore.BLUE)
             market_data = self.get_price_history(pair)
             market_data['current_price'] = current_price
             direction, confidence, reason = self.get_deepseek_analysis(pair, market_data)
             
             if direction == "HOLD" or confidence < 70:
-                self.print_color(f"⏸️ AI Decision: HOLD ({confidence}%)", self.Fore.YELLOW)
+                self.print_color(f"⏸️ 3MIN AI Decision: HOLD ({confidence}%)", self.Fore.YELLOW)
                 return {"action": "HOLD", "pair": pair, "direction": direction, "confidence": confidence, "reason": reason}
             else:
                 direction_icon = "📈" if direction == "LONG" else "📉"
                 color = self.Fore.BLUE if direction == "LONG" else self.Fore.RED
-                self.print_color(f"🎯 AI Decision: {direction} {direction_icon} ({confidence}%)", color + self.Style.BRIGHT)
+                self.print_color(f"🎯 3MIN AI Decision: {direction} {direction_icon} ({confidence}%)", color + self.Style.BRIGHT)
                 return {"action": "TRADE", "pair": pair, "direction": direction, "confidence": confidence, "reason": reason}
                 
         except Exception as e:
@@ -416,37 +442,6 @@ class RealOrderPositionTracker:
                 continue
         return market_data
 
-    def run_trading_cycle(self):
-        try:
-            self.display_dashboard()
-            
-            if hasattr(self, 'cycle_count') and self.cycle_count % 5 == 0:
-                self.show_trade_history(5)
-            
-            # AI ALWAYS SCANS ALL PAIRS
-            market_data = self.get_market_data()
-            if market_data:
-                self.print_color(f"\n🤖 AI SCANNING {len(market_data)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
-                for pair in market_data.keys():
-                    if self.can_open_new_trade(pair):
-                        pair_data = {pair: market_data[pair]}
-                        decision = self.get_ai_decision(pair_data)
-                        if decision["action"] == "TRADE":
-                            direction_icon = "📈" if decision['direction'] == "LONG" else "📉"
-                            self.print_color(f"🚀 QUALIFIED: {pair} {decision['direction']} {direction_icon} ({decision['confidence']}%)", self.Fore.GREEN + self.Style.BRIGHT)
-                            success = self.execute_trade(decision)
-                            if success:
-                                pass
-                        else:
-                            self.print_color(f"⏸️ HOLD: {pair} ({decision['confidence']}%)", self.Fore.YELLOW)
-                    else:
-                        self.print_color(f"↗️ SKIPPED: {pair} (already active)", self.Fore.MAGENTA)
-            else:
-                self.print_color("No market data available", self.Fore.YELLOW)
-                
-        except Exception as e:
-            self.print_color(f"Trading cycle error: {e}", self.Fore.RED)
-
     def can_open_new_trade(self, pair):
         if pair in self.bot_opened_trades and self.bot_opened_trades[pair]['status'] == 'ACTIVE':
             return False
@@ -458,31 +453,64 @@ class RealOrderPositionTracker:
         return False
 
     def display_dashboard(self):
-        self.print_color(f"\n📊 DASHBOARD - {self.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
+        self.print_color(f"\n📊 3MIN SCALPING DASHBOARD - {self.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
         self.print_color("=" * 80, self.Fore.CYAN)
         self.print_color("💡 LIVE TRADING DISABLED - PAPER TRADING MODE", self.Fore.YELLOW)
 
     def start_trading(self):
-        self.print_color("🚀 STARTING FINAL AI ALWAYS SCAN BOT!", self.Fore.CYAN + self.Style.BRIGHT)
+        self.print_color("🚀 STARTING 3MIN SCALPING BOT!", self.Fore.CYAN + self.Style.BRIGHT)
         self.cycle_count = 0
         while True:
             try:
                 self.cycle_count += 1
-                self.print_color(f"\n🔄 CYCLE {self.cycle_count}", self.Fore.CYAN)
+                self.print_color(f"\n🔄 3MIN CYCLE {self.cycle_count}", self.Fore.CYAN)
                 self.print_color("=" * 50, self.Fore.CYAN)
                 self.run_trading_cycle()
-                self.print_color(f"⏰ Waiting 30 seconds...", self.Fore.BLUE)
-                time.sleep(30)
+                self.print_color(f"⏰ Waiting 60 seconds for next 3MIN analysis...", self.Fore.BLUE)
+                time.sleep(60)  # Wait 60 seconds for 3-minute timeframe
             except KeyboardInterrupt:
                 self.print_color(f"\n🛑 BOT STOPPED", self.Fore.RED + self.Style.BRIGHT)
                 self.show_trade_history(10)
                 break
             except Exception as e:
                 self.print_color(f"Main loop error: {e}", self.Fore.RED)
-                time.sleep(30)
+                time.sleep(60)
+
+    def run_trading_cycle(self):
+        try:
+            self.display_dashboard()
+            
+            if hasattr(self, 'cycle_count') and self.cycle_count % 5 == 0:
+                self.show_trade_history(5)
+            
+            # AI SCANS ALL PAIRS
+            market_data = self.get_market_data()
+            if market_data:
+                self.print_color(f"\n🤖 3MIN AI SCANNING {len(market_data)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
+                
+                for pair in market_data.keys():
+                    if self.can_open_new_trade(pair):
+                        pair_data = {pair: market_data[pair]}
+                        decision = self.get_ai_decision(pair_data)
+                        
+                        if decision["action"] == "TRADE":
+                            direction_icon = "📈" if decision['direction'] == "LONG" else "📉"
+                            self.print_color(f"🚀 3MIN QUALIFIED: {pair} {decision['direction']} {direction_icon} ({decision['confidence']}%)", self.Fore.GREEN + self.Style.BRIGHT)
+                            success = self.execute_trade(decision)
+                            if success:
+                                pass
+                        else:
+                            self.print_color(f"⏸️ 3MIN HOLD: {pair} ({decision['confidence']}%)", self.Fore.YELLOW)
+                    else:
+                        self.print_color(f"↗️ 3MIN SKIPPED: {pair} (already active)", self.Fore.MAGENTA)
+            else:
+                self.print_color("No market data available", self.Fore.YELLOW)
+                
+        except Exception as e:
+            self.print_color(f"Trading cycle error: {e}", self.Fore.RED)
 
 
-class AIPaperTradingBot:
+class ThreeMinPaperTradingBot:
     def __init__(self, real_bot):
         self.real_bot = real_bot
         self.paper_balance = 1000
@@ -490,15 +518,16 @@ class AIPaperTradingBot:
         self.paper_history = []
         self.is_paper_trading = True
         
-        self.real_bot.print_color("🤖 AI PAPER TRADING BOT INITIALIZED!", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
+        self.real_bot.print_color("🤖 3MIN PAPER TRADING BOT INITIALIZED!", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
         self.real_bot.print_color(f"💰 Starting Paper Balance: ${self.paper_balance}", self.real_bot.Fore.CYAN)
+        self.real_bot.print_color(f"🎯 Strategy: 3MIN Scalping | TP: +0.8% | SL: -0.5%", self.real_bot.Fore.MAGENTA)
         
     def paper_execute_trade(self, decision):
         """AI decision ကို paper trade အဖြစ်အစားထိုးလုပ်မယ်"""
         try:
             pair = decision["pair"]
             direction = decision["direction"]
-            confidence = decision["confidence"]
+            confidence = decision["reason"]
             
             # Real market price ကိုယူမယ်
             current_price = self.real_bot.get_current_price(pair)
@@ -511,15 +540,15 @@ class AIPaperTradingBot:
             if quantity is None:
                 return False
             
-            # Better TP/SL calculation for both directions
+            # 3MIN SCALPING TP/SL
             if direction == "LONG":
-                take_profit = current_price * 1.008   # +0.8%
-                stop_loss = current_price * 0.995     # -0.5%
-                tp_sl_ratio = "TP: +0.8% | SL: -0.5%"
+                take_profit = current_price * (1 + self.real_bot.tp_percent)   # +0.8%
+                stop_loss = current_price * (1 - self.real_bot.sl_percent)     # -0.5%
+                tp_sl_ratio = f"TP: +{self.real_bot.tp_percent*100:.1f}% | SL: -{self.real_bot.sl_percent*100:.1f}%"
             else:  # SHORT
-                take_profit = current_price * 0.992   # -0.8%  
-                stop_loss = current_price * 1.005     # +0.5%
-                tp_sl_ratio = "TP: -0.8% | SL: +0.5%"
+                take_profit = current_price * (1 - self.real_bot.tp_percent)   # -0.8%
+                stop_loss = current_price * (1 + self.real_bot.sl_percent)     # +0.5%
+                tp_sl_ratio = f"TP: -{self.real_bot.tp_percent*100:.1f}% | SL: +{self.real_bot.sl_percent*100:.1f}%"
             
             take_profit = self.real_bot.format_price(pair, take_profit)
             stop_loss = self.real_bot.format_price(pair, stop_loss)
@@ -542,7 +571,7 @@ class AIPaperTradingBot:
             direction_color = self.real_bot.Fore.BLUE if direction == 'LONG' else self.real_bot.Fore.RED
             direction_icon = "📈" if direction == 'LONG' else "📉"
             
-            self.real_bot.print_color(f"📝 {direction_icon} PAPER TRADE EXECUTED: {pair} {direction}", direction_color)
+            self.real_bot.print_color(f"📝 {direction_icon} 3MIN PAPER TRADE EXECUTED: {pair} {direction}", direction_color)
             self.real_bot.print_color(f"   Size: {quantity} | Entry: ${current_price:.4f}", self.real_bot.Fore.WHITE)
             self.real_bot.print_color(f"   TP: ${take_profit:.4f} | SL: ${stop_loss:.4f}", self.real_bot.Fore.YELLOW)
             self.real_bot.print_color(f"   {tp_sl_ratio}", self.real_bot.Fore.CYAN)
@@ -607,7 +636,7 @@ class AIPaperTradingBot:
                     # Display result
                     pnl_color = self.real_bot.Fore.GREEN if pnl > 0 else self.real_bot.Fore.RED
                     direction_icon = "📈" if trade['direction'] == 'LONG' else "📉"
-                    self.real_bot.print_color(f"📊 {direction_icon} PAPER TRADE CLOSED: {pair} {trade['direction']}", pnl_color)
+                    self.real_bot.print_color(f"📊 {direction_icon} 3MIN PAPER TRADE CLOSED: {pair} {trade['direction']}", pnl_color)
                     self.real_bot.print_color(f"   Exit: ${current_price:.4f} | P&L: ${pnl:.2f}", pnl_color)
                     self.real_bot.print_color(f"   Reason: {close_reason}", self.real_bot.Fore.YELLOW)
                     
@@ -646,7 +675,7 @@ class AIPaperTradingBot:
         
         total_value = self.paper_balance + unrealized_total
         
-        self.real_bot.print_color(f"\n💼 PAPER TRADING PORTFOLIO", self.real_bot.Fore.CYAN + self.real_bot.Style.BRIGHT)
+        self.real_bot.print_color(f"\n💼 3MIN PAPER TRADING PORTFOLIO", self.real_bot.Fore.CYAN + self.real_bot.Style.BRIGHT)
         self.real_bot.print_color("=" * 60, self.real_bot.Fore.CYAN)
         self.real_bot.print_color(f"Active Positions: {len(self.paper_positions)}", self.real_bot.Fore.WHITE)
         self.real_bot.print_color(f"Paper Balance: ${self.paper_balance:.2f}", self.real_bot.Fore.WHITE)
@@ -661,6 +690,9 @@ class AIPaperTradingBot:
                                     self.real_bot.Fore.GREEN if win_rate > 50 else self.real_bot.Fore.YELLOW)
             self.real_bot.print_color(f"Total P&L: ${total_pnl:.2f}", 
                                     self.real_bot.Fore.GREEN if total_pnl > 0 else self.real_bot.Fore.RED)
+            avg_trade_pnl = total_pnl / total_trades
+            self.real_bot.print_color(f"Avg Trade P&L: ${avg_trade_pnl:.2f}", 
+                                    self.real_bot.Fore.GREEN if avg_trade_pnl > 0 else self.real_bot.Fore.RED)
 
     def show_paper_trade_history(self, limit=10):
         """Paper trade history ပြမယ်"""
@@ -668,8 +700,8 @@ class AIPaperTradingBot:
             self.real_bot.print_color("No paper trade history found", self.real_bot.Fore.YELLOW)
             return
             
-        self.real_bot.print_color(f"\n📋 PAPER TRADE HISTORY (Last {min(limit, len(self.paper_history))} trades)", self.real_bot.Fore.CYAN)
-        self.real_bot.print_color("=" * 80, self.real_bot.Fore.CYAN)
+        self.real_bot.print_color(f"\n📋 3MIN PAPER TRADE HISTORY (Last {min(limit, len(self.paper_history))} trades)", self.real_bot.Fore.CYAN)
+        self.real_bot.print_color("=" * 90, self.real_bot.Fore.CYAN)
         
         for i, trade in enumerate(reversed(self.paper_history[-limit:])):
             pnl = trade.get('pnl', 0)
@@ -680,7 +712,7 @@ class AIPaperTradingBot:
             self.real_bot.print_color(f"   TP: ${trade.get('take_profit', 0):.4f} | SL: ${trade.get('stop_loss', 0):.4f} | Reason: {trade.get('close_reason', 'N/A')}", self.real_bot.Fore.YELLOW)
 
     def run_paper_trading_cycle(self):
-        """AI paper trading cycle"""
+        """3MIN AI paper trading cycle"""
         try:
             # Monitor existing paper positions
             self.monitor_paper_positions()
@@ -688,7 +720,7 @@ class AIPaperTradingBot:
             # Get AI decisions for all pairs
             market_data = self.real_bot.get_market_data()
             if market_data:
-                self.real_bot.print_color(f"\n🤖 AI SCANNING FOR PAPER TRADES...", self.real_bot.Fore.BLUE + self.real_bot.Style.BRIGHT)
+                self.real_bot.print_color(f"\n🤖 3MIN AI SCANNING {len(market_data)} PAIRS...", self.real_bot.Fore.BLUE + self.real_bot.Style.BRIGHT)
                 
                 for pair in market_data.keys():
                     # Check if we can open new paper position
@@ -698,32 +730,33 @@ class AIPaperTradingBot:
                         
                         if decision["action"] == "TRADE":
                             direction_icon = "📈" if decision['direction'] == "LONG" else "📉"
-                            self.real_bot.print_color(f"🎯 AI PAPER SIGNAL: {pair} {decision['direction']} {direction_icon} ({decision['confidence']}%)", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
+                            self.real_bot.print_color(f"🎯 3MIN AI PAPER SIGNAL: {pair} {decision['direction']} {direction_icon} ({decision['confidence']}%)", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
                             self.paper_execute_trade(decision)
                         else:
-                            self.real_bot.print_color(f"⏸️ AI HOLD: {pair} ({decision['confidence']}%)", self.real_bot.Fore.YELLOW)
+                            self.real_bot.print_color(f"⏸️ 3MIN AI HOLD: {pair} ({decision['confidence']}%)", self.real_bot.Fore.YELLOW)
                     else:
                         if pair in self.paper_positions:
                             direction_icon = "📈" if self.paper_positions[pair]['direction'] == 'LONG' else "📉"
-                            self.real_bot.print_color(f"↗️ ACTIVE PAPER POSITION: {pair} {direction_icon}", self.real_bot.Fore.MAGENTA)
+                            self.real_bot.print_color(f"↗️ 3MIN ACTIVE PAPER POSITION: {pair} {direction_icon}", self.real_bot.Fore.MAGENTA)
             
             # Show portfolio status
             self.get_paper_portfolio_status()
             
         except Exception as e:
-            self.real_bot.print_color(f"Paper trading cycle error: {e}", self.real_bot.Fore.RED)
+            self.real_bot.print_color(f"3MIN Paper trading cycle error: {e}", self.real_bot.Fore.RED)
 
     def start_paper_trading(self):
-        """Start AI paper trading"""
-        self.real_bot.print_color("🚀 STARTING AI PAPER TRADING BOT!", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
-        self.real_bot.print_color("📝 REAL AI ANALYSIS + PAPER EXECUTION", self.real_bot.Fore.CYAN)
+        """Start 3MIN AI paper trading"""
+        self.real_bot.print_color("🚀 STARTING 3MIN AI PAPER TRADING BOT!", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
+        self.real_bot.print_color("📝 3MIN CHART ANALYSIS + PAPER EXECUTION", self.real_bot.Fore.CYAN)
         self.real_bot.print_color("💰 NO REAL MONEY AT RISK", self.real_bot.Fore.GREEN)
+        self.real_bot.print_color(f"🎯 TP: +{self.real_bot.tp_percent*100:.1f}% | SL: -{self.real_bot.sl_percent*100:.1f}%", self.real_bot.Fore.MAGENTA)
         
         cycle_count = 0
         while True:
             try:
                 cycle_count += 1
-                self.real_bot.print_color(f"\n🔄 PAPER TRADING CYCLE {cycle_count}", self.real_bot.Fore.CYAN)
+                self.real_bot.print_color(f"\n🔄 3MIN PAPER TRADING CYCLE {cycle_count}", self.real_bot.Fore.CYAN)
                 self.real_bot.print_color("=" * 50, self.real_bot.Fore.CYAN)
                 
                 self.run_paper_trading_cycle()
@@ -732,29 +765,29 @@ class AIPaperTradingBot:
                 if cycle_count % 10 == 0:
                     self.show_paper_trade_history(5)
                 
-                self.real_bot.print_color(f"⏰ Waiting 30 seconds...", self.real_bot.Fore.BLUE)
-                time.sleep(30)
+                self.real_bot.print_color(f"⏰ Waiting 60 seconds for next 3MIN analysis...", self.real_bot.Fore.BLUE)
+                time.sleep(60)  # Wait 60 seconds for 3-minute timeframe
                 
             except KeyboardInterrupt:
-                self.real_bot.print_color(f"\n🛑 PAPER TRADING STOPPED", self.real_bot.Fore.RED + self.real_bot.Style.BRIGHT)
+                self.real_bot.print_color(f"\n🛑 3MIN PAPER TRADING STOPPED", self.real_bot.Fore.RED + self.real_bot.Style.BRIGHT)
                 self.show_paper_trade_history(10)
                 break
             except Exception as e:
-                self.real_bot.print_color(f"Paper trading error: {e}", self.real_bot.Fore.RED)
-                time.sleep(30)
+                self.real_bot.print_color(f"3MIN Paper trading error: {e}", self.real_bot.Fore.RED)
+                time.sleep(60)
 
 
 if __name__ == "__main__":
     try:
         # Real bot ကိုတည်ဆောက်မယ်
-        real_bot = RealOrderPositionTracker()
+        real_bot = ThreeMinScalpingBot()
         
         print("\n" + "="*60)
-        print("🤖 FINAL AI TRADING BOT")
+        print("🤖 3MIN AI SCALPING BOT")
         print("="*60)
         print("SELECT TRADING MODE:")
         print("1. 🔴 Live Trading (Real Money - RISKY)")
-        print("2. 🟢 AI Paper Trading (RECOMMENDED - NO RISK)")
+        print("2. 🟢 3MIN Paper Trading (RECOMMENDED - NO RISK)")
         
         choice = input("Enter choice (1-2): ").strip()
         
@@ -764,12 +797,12 @@ if __name__ == "__main__":
             if confirm.upper() == 'YES':
                 real_bot.start_trading()
             else:
-                print("Using Paper Trading mode instead...")
-                paper_bot = AIPaperTradingBot(real_bot)
+                print("Using 3MIN Paper Trading mode instead...")
+                paper_bot = ThreeMinPaperTradingBot(real_bot)
                 paper_bot.start_paper_trading()
         else:
-            # Default to AI Paper Trading
-            paper_bot = AIPaperTradingBot(real_bot)
+            # Default to 3MIN Paper Trading
+            paper_bot = ThreeMinPaperTradingBot(real_bot)
             paper_bot.start_paper_trading()
             
     except Exception as e:
