@@ -175,7 +175,7 @@ class RealOrderPositionTracker:
                 return None
 
             fixed_quantities = {
-                "SOLUSDT": 0.3, "AVAXUSDT": 2.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
+                "SOLUSDT": 0.3, "AVAXUSDT": 3.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
             }
             quantity = fixed_quantities.get(pair)
             
