@@ -40,12 +40,11 @@ class RealOrderPositionTracker:
         self.leverage = 5
         
         # Multi-pair parameters
-        self.max_concurrent_trades = 3
+        self.max_concurrent_trades = 1
         self.available_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
         
-        # Track both bot-opened and existing positions
+        # Track bot-opened trades only
         self.bot_opened_trades = {}
-        self.existing_positions = {}
         
         # Trade history
         self.trade_history_file = "trade_history.json"
@@ -58,12 +57,10 @@ class RealOrderPositionTracker:
         # Initialize Binance client
         self.binance = Client(self.binance_api_key, self.binance_secret)
         
-        self.print_color(f"REAL ORDER POSITION TRACKER ACTIVATED!", Fore.CYAN)
-        self.print_color(f"Trade Size: ${self.trade_size_usd}", Fore.GREEN)
+        self.print_color(f"FINAL PERFECT BOT ACTIVATED!", Fore.CYAN + Style.BRIGHT)
+        self.print_color(f"Trade Size: ${self.trade_size_usd} | Leverage: {self.leverage}x", Fore.GREEN)
         self.print_color(f"Max Trades: {self.max_concurrent_trades}", Fore.YELLOW)
-        self.print_color(f"Using DeepSeek AI for Trading Decisions", Fore.MAGENTA)
-        self.print_color(f"Timezone: Thailand (Asia/Bangkok)", Fore.BLUE)
-        self.print_color(f"Trade History: {self.trade_history_file}", Fore.CYAN)
+        self.print_color(f"Confidence: ≥70% | Timezone: Thailand", Fore.MAGENTA)
         
         self.validate_config()
         self.setup_futures()
@@ -94,7 +91,7 @@ class RealOrderPositionTracker:
             if len(self.trade_history) > 100:
                 self.trade_history = self.trade_history[-100:]
             self.save_trade_history()
-            self.print_color(f"Trade saved to history: {trade_data['pair']} {trade_data['direction']}", Fore.CYAN)
+            self.print_color(f"Trade saved: {trade_data['pair']} {trade_data['direction']}", Fore.CYAN)
         except Exception as e:
             self.print_color(f"Error adding trade to history: {e}", Fore.RED)
     
@@ -108,7 +105,7 @@ class RealOrderPositionTracker:
             pnl = trade.get('pnl', 0)
             pnl_color = Fore.GREEN if pnl > 0 else Fore.RED if pnl < 0 else Fore.YELLOW
             self.print_color(f"{i+1}. {trade['pair']} {trade['direction']} | Entry: ${trade.get('entry_price', 0):.4f} | Exit: ${trade.get('exit_price', 0):.4f} | P&L: ${pnl:.2f}", pnl_color)
-            self.print_color(f"   TP: ${trade.get('take_profit', 0):.4f} | SL: ${trade.get('stop_loss', 0):.4f} | Status: {trade.get('status', 'UNKNOWN')} | Time: {trade.get('close_time', 'N/A')}", Fore.YELLOW)
+            self.print_color(f"   TP: ${trade.get('take_profit', 0):.4f} | SL: ${trade.get('stop_loss', 0):.4f} | Time: {trade.get('close_time', 'N/A')}", Fore.YELLOW)
     
     def get_thailand_time(self):
         now_utc = datetime.now(pytz.utc)
@@ -179,7 +176,7 @@ class RealOrderPositionTracker:
 
             # Fixed quantities
             fixed_quantities = {
-                "SOLUSDT": 0.3, "AVAXUSDT": 3.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
+                "SOLUSDT": 0.3, "AVAXUSDT": 2.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
             }
             quantity = fixed_quantities.get(pair)
             
@@ -284,7 +281,7 @@ class RealOrderPositionTracker:
             market_data['current_price'] = current_price
             direction, confidence, reason = self.get_deepseek_analysis(pair, market_data)
             
-            if direction == "HOLD" or confidence < 70:  # ← 70% ပြင်ပြီး
+            if direction == "HOLD" or confidence < 70:
                 self.print_color(f"AI Decision: HOLD ({confidence}%)", Fore.YELLOW)
                 return {"action": "HOLD", "pair": pair, "direction": direction, "confidence": confidence, "reason": reason}
             else:
@@ -304,7 +301,6 @@ class RealOrderPositionTracker:
             
             direction = decision["direction"]
             confidence = decision["confidence"]
-            reason = decision["reason"]
             
             # Get current price
             ticker = self.binance.futures_symbol_ticker(symbol=pair)
@@ -318,13 +314,13 @@ class RealOrderPositionTracker:
             if quantity is None:
                 return False
             
-            # Calculate TP/SL with correct percentages
+            # Calculate TP/SL
             if direction == "LONG":
-                tp_raw = current_price * 1.008  # +0.8%
-                sl_raw = current_price * 0.995  # -0.5%
-            else:  # SHORT
-                tp_raw = current_price * 0.992  # -0.8%
-                sl_raw = current_price * 1.005  # +0.5%
+                tp_raw = current_price * 1.008
+                sl_raw = current_price * 0.995
+            else:
+                tp_raw = current_price * 0.992
+                sl_raw = current_price * 1.005
             
             take_profit = self.format_price(pair, tp_raw)
             stop_loss = self.format_price(pair, sl_raw)
@@ -332,11 +328,11 @@ class RealOrderPositionTracker:
             # VALIDATE TP/SL
             if direction == "LONG":
                 if take_profit <= current_price or stop_loss >= current_price:
-                    self.print_color(f"Invalid TP/SL for LONG: TP={take_profit}, SL={stop_loss}, Entry={current_price}", Fore.RED)
+                    self.print_color(f"Invalid TP/SL for LONG", Fore.RED)
                     return False
             else:
                 if take_profit >= current_price or stop_loss <= current_price:
-                    self.print_color(f"Invalid TP/SL for SHORT: TP={take_profit}, SL={stop_loss}, Entry={current_price}", Fore.RED)
+                    self.print_color(f"Invalid TP/SL for SHORT", Fore.RED)
                     return False
             
             direction_color = Fore.BLUE if direction == 'LONG' else Fore.RED
@@ -344,10 +340,9 @@ class RealOrderPositionTracker:
             self.print_color(f"   Size: {quantity} | Entry: ${current_price:.4f}", Fore.WHITE)
             self.print_color(f"   TP: ${take_profit:.4f} | SL: ${stop_loss:.4f}", Fore.YELLOW)
             
-            # Step 1: Open position
+            # Open position
             entry_side = 'BUY' if direction == 'LONG' else 'SELL'
             try:
-                self.print_color(f"Placing {entry_side} order...", Fore.YELLOW)
                 order = self.binance.futures_create_order(
                     symbol=pair,
                     side=entry_side,
@@ -357,8 +352,7 @@ class RealOrderPositionTracker:
                 self.print_color(f"{direction} ORDER EXECUTED", Fore.GREEN)
                 time.sleep(2)
                 
-                # Step 2: Place TP/SL
-                self.print_color(f"Placing TP/SL orders...", Fore.YELLOW)
+                # Place TP/SL
                 stop_side = 'SELL' if direction == 'LONG' else 'BUY'
                 
                 self.binance.futures_create_order(
@@ -396,7 +390,7 @@ class RealOrderPositionTracker:
                     'entry_time_th': self.get_thailand_time()
                 }
                 
-                self.print_color(f"TRADE ACTIVATED: {pair} {direction}", Fore.GREEN)
+                self.print_color(f"TRADE ACTIVATED: {pair} {direction}", Fore.GREEN + Style.BRIGHT)
                 return True
                 
             except BinanceAPIException as e:
@@ -410,63 +404,6 @@ class RealOrderPositionTracker:
             self.print_color(f"Trade failed: {e}", Fore.RED)
             return False
 
-    def monitor_positions(self):
-        try:
-            for pair, trade in list(self.bot_opened_trades.items()):
-                if trade['status'] == 'ACTIVE':
-                    position_info = self.get_live_position_data(pair)
-                    if position_info is None:
-                        current_price = self.get_current_price(pair)
-                        if current_price:
-                            if trade['direction'] == 'LONG':
-                                pnl = (current_price - trade['entry_price']) * trade['quantity']
-                            else:
-                                pnl = (trade['entry_price'] - current_price) * trade['quantity']
-                            closed_trade = trade.copy()
-                            closed_trade['exit_price'] = current_price
-                            closed_trade['pnl'] = pnl
-                            closed_trade['status'] = 'CLOSED'
-                            self.add_trade_to_history(closed_trade)
-                        trade['status'] = 'CLOSED'
-        except Exception as e:
-            self.print_color(f"Monitoring error: {e}", Fore.RED)
-
-    def get_current_price(self, pair):
-        try:
-            ticker = self.binance.futures_symbol_ticker(symbol=pair)
-            return float(ticker['price'])
-        except:
-            return None
-
-    def scan_existing_positions(self):
-        try:
-            positions = self.binance.futures_position_information()
-            self.existing_positions = {}
-            for pos in positions:
-                pair = pos['symbol']
-                position_amt = float(pos['positionAmt'])
-                if position_amt != 0 and pair in self.available_pairs:
-                    entry_price = float(pos.get('entryPrice', 0))
-                    unrealized_pnl = float(pos.get('unRealizedProfit', 0))
-                    try:
-                        ticker = self.binance.futures_symbol_ticker(symbol=pair)
-                        current_price = float(ticker['price'])
-                    except:
-                        current_price = entry_price
-                    direction = "SHORT" if position_amt < 0 else "LONG"
-                    self.existing_positions[pair] = {
-                        'direction': direction,
-                        'entry_price': entry_price,
-                        'quantity': abs(position_amt),
-                        'current_price': current_price,
-                        'unrealized_pnl': unrealized_pnl,
-                        'status': 'ACTIVE'
-                    }
-            return len(self.existing_positions)
-        except Exception as e:
-            self.print_color(f"Error scanning positions: {e}", Fore.RED)
-            return 0
-    
     def get_live_position_data(self, pair):
         try:
             positions = self.binance.futures_position_information(symbol=pair)
@@ -490,52 +427,104 @@ class RealOrderPositionTracker:
         except Exception as e:
             self.print_color(f"Error getting live data: {e}", Fore.RED)
             return None
-    
+
+    def scan_existing_positions(self):
+        try:
+            positions = self.binance.futures_position_information()
+            self.existing_positions = {}
+            
+            for pos in positions:
+                pair = pos['symbol']
+                position_amt = float(pos['positionAmt'])
+                
+                if position_amt == 0 or pair not in self.available_pairs:
+                    continue
+                
+                # Skip if bot opened this position
+                if pair in self.bot_opened_trades and self.bot_opened_trades[pair]['status'] == 'ACTIVE':
+                    continue
+                
+                # Add only true manual positions
+                entry_price = float(pos.get('entryPrice', 0))
+                unrealized_pnl = float(pos.get('unRealizedProfit', 0))
+                try:
+                    current_price = float(self.binance.futures_symbol_ticker(symbol=pair)['price'])
+                except:
+                    current_price = entry_price
+                
+                direction = "SHORT" if position_amt < 0 else "LONG"
+                
+                self.existing_positions[pair] = {
+                    'direction': direction,
+                    'entry_price': entry_price,
+                    'quantity': abs(position_amt),
+                    'current_price': current_price,
+                    'unrealized_pnl': unrealized_pnl,
+                    'status': 'ACTIVE',
+                    'source': 'MANUAL'
+                }
+            
+            return len(self.existing_positions)
+            
+        except Exception as e:
+            self.print_color(f"Error scanning positions: {e}", Fore.RED)
+            return 0
+
     def display_dashboard(self):
-        self.print_color(f"\nDASHBOARD - {self.get_thailand_time()}", Fore.CYAN)
+        self.print_color(f"\nDASHBOARD - {self.get_thailand_time()}", Fore.CYAN + Style.BRIGHT)
         self.print_color("=" * 80, Fore.CYAN)
-        total_positions = len(self.existing_positions) + len([t for t in self.bot_opened_trades.values() if t['status'] == 'ACTIVE'])
-        if total_positions == 0:
-            self.print_color("No active positions", Fore.YELLOW)
-            return
-        for pair, position in self.existing_positions.items():
-            pnl_color = Fore.GREEN if position['unrealized_pnl'] >= 0 else Fore.RED
-            direction_color = Fore.BLUE if position['direction'] == 'LONG' else Fore.RED
-            self.print_color(f"{position['direction']} {pair}", direction_color)
-            self.print_color(f"   Size: {position['quantity']} | Entry: ${position['entry_price']:.4f}", Fore.WHITE)
-            self.print_color(f"   Current: ${position['current_price']:.4f} | P&L: ${position['unrealized_pnl']:.2f}", pnl_color)
-            self.print_color(f"   TP/SL: Manual (Not set by bot)", Fore.YELLOW)
+        
+        displayed = set()
+        
+        # 1. Bot positions [AI]
         for pair, trade in self.bot_opened_trades.items():
-            if trade['status'] == 'ACTIVE':
-                live_data = self.get_live_position_data(pair)
-                if live_data:
-                    pnl_color = Fore.GREEN if live_data['unrealized_pnl'] >= 0 else Fore.RED
-                    direction_color = Fore.BLUE if trade['direction'] == 'LONG' else Fore.RED
-                    current_price = live_data['current_price']
-                    if trade['direction'] == 'LONG':
-                        tp_distance = ((trade['take_profit'] - current_price) / current_price) * 100
-                        sl_distance = ((current_price - trade['stop_loss']) / current_price) * 100
-                        tp_sl_info = f"TP: +{tp_distance:.2f}% | SL: -{sl_distance:.2f}%"
-                    else:
-                        tp_distance = ((current_price - trade['take_profit']) / current_price) * 100
-                        sl_distance = ((trade['stop_loss'] - current_price) / current_price) * 100
-                        tp_sl_info = f"TP: +{tp_distance:.2f}% | SL: -{sl_distance:.2f}%"
-                    self.print_color(f"{trade['direction']} {pair} [AI]", direction_color)
-                    self.print_color(f"   Size: {trade['quantity']} | Entry: ${trade['entry_price']:.4f}", Fore.WHITE)
-                    self.print_color(f"   Current: ${current_price:.4f} | P&L: ${live_data['unrealized_pnl']:.2f}", pnl_color)
-                    self.print_color(f"   TP: ${trade['take_profit']:.4f} | SL: ${trade['stop_loss']:.4f}", Fore.YELLOW)
-                    self.print_color(f"   {tp_sl_info}", Fore.CYAN)
-    
+            if trade['status'] != 'ACTIVE':
+                continue
+            live = self.get_live_position_data(pair)
+            if not live:
+                continue
+            
+            displayed.add(pair)
+            direction_color = Fore.BLUE if trade['direction'] == 'LONG' else Fore.RED
+            pnl_color = Fore.GREEN if live['unrealized_pnl'] >= 0 else Fore.RED
+            
+            self.print_color(f"{trade['direction']} {pair} [AI]", direction_color + Style.BRIGHT)
+            self.print_color(f"   Size: {trade['quantity']} | Entry: ${trade['entry_price']:.4f}", Fore.WHITE)
+            self.print_color(f"   Current: ${live['current_price']:.4f} | P&L: ${live['unrealized_pnl']:.2f}", pnl_color)
+            
+            cp = live['current_price']
+            if trade['direction'] == 'LONG':
+                tp_dist = ((trade['take_profit'] - cp) / cp) * 100
+                sl_dist = ((cp - trade['stop_loss']) / cp) * 100
+            else:
+                tp_dist = ((cp - trade['take_profit']) / cp) * 100
+                sl_dist = ((trade['stop_loss'] - cp) / cp) * 100
+            self.print_color(f"   TP: ${trade['take_profit']:.4f} | SL: ${trade['stop_loss']:.4f}", Fore.YELLOW)
+            self.print_color(f"   TP: +{tp_dist:.2f}% | SL: -{sl_dist:.2f}%", Fore.CYAN)
+        
+        # 2. Manual positions
+        for pair, pos in self.existing_positions.items():
+            if pair in displayed:
+                continue
+            
+            pnl_color = Fore.GREEN if pos['unrealized_pnl'] >= 0 else Fore.RED
+            direction_color = Fore.BLUE if pos['direction'] == 'LONG' else Fore.RED
+            
+            self.print_color(f"{pos['direction']} {pair}", direction_color)
+            self.print_color(f"   Size: {pos['quantity']} | Entry: ${pos['entry_price']:.4f}", Fore.WHITE)
+            self.print_color(f"   Current: ${pos['current_price']:.4f} | P&L: ${pos['unrealized_pnl']:.2f}", pnl_color)
+            self.print_color(f"   TP/SL: Manual (Not set by bot)", Fore.YELLOW)
+        
+        if not displayed and not self.existing_positions:
+            self.print_color("No active positions", Fore.YELLOW)
+
     def can_open_new_trade(self, pair):
+        if pair in self.bot_opened_trades and self.bot_opened_trades[pair]['status'] == 'ACTIVE':
+            return False
         if pair in self.existing_positions:
             return False
-        active_bot_trades = [k for k, v in self.bot_opened_trades.items() if v['status'] == 'ACTIVE']
-        if pair in active_bot_trades:
-            return False
-        total_positions = len(self.existing_positions) + len(active_bot_trades)
-        if total_positions >= self.max_concurrent_trades:
-            return False
-        return True
+        total_active = len(self.bot_opened_trades) + len(self.existing_positions)
+        return total_active < self.max_concurrent_trades
     
     def get_market_data(self):
         market_data = {}
@@ -554,14 +543,11 @@ class RealOrderPositionTracker:
     def run_trading_cycle(self):
         try:
             self.scan_existing_positions()
-            self.monitor_positions()
             self.display_dashboard()
             if hasattr(self, 'cycle_count') and self.cycle_count % 5 == 0:
                 self.show_trade_history(5)
             
-            active_bot_trades = len([t for t in self.bot_opened_trades.values() if t['status'] == 'ACTIVE'])
-            total_positions = len(self.existing_positions) + active_bot_trades
-            if total_positions < self.max_concurrent_trades:
+            if len(self.bot_opened_trades) + len(self.existing_positions) < self.max_concurrent_trades:
                 market_data = self.get_market_data()
                 if market_data:
                     self.print_color(f"\nLooking for opportunities...", Fore.BLUE)
@@ -573,7 +559,6 @@ class RealOrderPositionTracker:
                                 self.print_color(f"QUALIFIED: {pair}", Fore.GREEN)
                                 success = self.execute_trade(decision)
                                 if success:
-                                    self.print_color(f"Trade executed!", Fore.GREEN)
                                     break
                             else:
                                 self.print_color(f"HOLD: {pair}", Fore.YELLOW)
@@ -581,7 +566,7 @@ class RealOrderPositionTracker:
             self.print_color(f"Trading cycle error: {e}", Fore.RED)
 
     def start_trading(self):
-        self.print_color("STARTING TRADING BOT!", Fore.CYAN)
+        self.print_color("STARTING FINAL PERFECT BOT!", Fore.CYAN + Style.BRIGHT)
         self.cycle_count = 0
         while True:
             try:
@@ -592,7 +577,7 @@ class RealOrderPositionTracker:
                 self.print_color(f"Waiting 30 seconds...", Fore.BLUE)
                 time.sleep(30)
             except KeyboardInterrupt:
-                self.print_color(f"\nBOT STOPPED", Fore.RED)
+                self.print_color(f"\nBOT STOPPED", Fore.RED + Style.BRIGHT)
                 self.show_trade_history(10)
                 break
             except Exception as e:
@@ -603,14 +588,13 @@ if __name__ == "__main__":
     try:
         bot = RealOrderPositionTracker()
         print("\n" + "="*50)
-        print("Choose mode:")
+        print("FINAL PERFECT BOT READY")
         print("1. Live Trading")
-        print("2. 7-Hour Backtest Simulation")
-        choice = input("Enter choice (1 or 2): ").strip()
-        if choice == "2":
-            # Backtest code remains unchanged
-            pass
-        else:
+        print("2. Backtest (Not included)")
+        choice = input("Enter choice (1): ").strip()
+        if choice == "1":
             bot.start_trading()
+        else:
+            print("Backtest not included in this version.")
     except Exception as e:
         print(f"Failed to start bot: {e}")
