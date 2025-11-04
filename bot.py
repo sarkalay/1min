@@ -54,7 +54,7 @@ class RealOrderPositionTracker:
         self.leverage = 5
         
         # Multi-pair parameters
-        self.max_concurrent_trades = 4
+        self.max_concurrent_trades = 2
         self.available_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
         
         # Track bot-opened trades only
@@ -208,7 +208,7 @@ class RealOrderPositionTracker:
                 return None
 
             fixed_quantities = {
-                "SOLUSDT": 0.3, "AVAXUSDT": 3.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
+                "SOLUSDT": 0.3, "AVAXUSDT": 2.0, "XRPUSDT": 20.0, "LINKUSDT": 3.2, "DOTUSDT": 18.0
             }
             quantity = fixed_quantities.get(pair)
             
@@ -258,27 +258,61 @@ class RealOrderPositionTracker:
                 return "HOLD", 0, "No API key"
             
             current_price = market_data['current_price']
-            prompt = f"Analyze {pair} at ${current_price:.4f} for scalping. Respond with JSON: {{\"direction\": \"LONG|SHORT|HOLD\", \"confidence\": 70, \"reason\": \"brief explanation\"}}"
+            
+            # Improved prompt for balanced LONG/SHORT analysis
+            prompt = f"""
+            Analyze {pair} for 1-minute scalping trading. Current price: ${current_price:.4f}
+            
+            IMPORTANT: Provide OBJECTIVE analysis considering both BULLISH and BEARISH scenarios equally.
+            
+            Technical Analysis Framework:
+            1. Price Action: Look for breakouts, rejections, consolidation patterns
+            2. Momentum: Check if price is accelerating up or down
+            3. Market Structure: Identify key support/resistance levels
+            4. Volatility: Assess if market conditions favor quick scalps
+            
+            Trading Parameters:
+            - Target: +0.8% profit
+            - Stop Loss: -0.5%
+            - Timeframe: 1-3 minutes hold
+            - Strategy: Quick momentum scalping
+            
+            CRITICAL: Be completely objective. If bullish signals are stronger, recommend LONG. 
+            If bearish signals are stronger, recommend SHORT. If unclear, recommend HOLD.
+            
+            Respond with this exact JSON format only:
+            {{
+                "direction": "LONG|SHORT|HOLD",
+                "confidence": 0-100,
+                "reason": "Specific technical reason based on price action"
+            }}
+            
+            Make sure to consider SHORT opportunities equally to LONG opportunities.
+            """
             
             headers = {"Authorization": f"Bearer {self.deepseek_key}", "Content-Type": "application/json"}
             data = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": "You are a crypto trading analyst. Respond with valid JSON only."},
+                    {"role": "system", "content": "You are a professional crypto trader. Analyze markets OBJECTIVELY. Consider both LONG and SHORT opportunities EQUALLY. Provide balanced recommendations based purely on technical analysis. Respond with valid JSON only."},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.1,
-                "max_tokens": 300
+                "temperature": 0.4,  # Balanced temperature for varied but reasonable responses
+                "max_tokens": 500
             }
             
-            self.print_color(f"Consulting DeepSeek AI for {pair}...", self.Fore.MAGENTA)
+            self.print_color(f"🤖 AI Analyzing {pair}...", self.Fore.MAGENTA)
             response = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=data, timeout=30)
             
             if response.status_code == 200:
                 result = response.json()
                 ai_response = result['choices'][0]['message']['content'].strip()
                 direction, confidence, reason = self.parse_ai_response(ai_response)
-                self.print_color(f"AI Analysis: {direction} ({confidence}%)", self.Fore.MAGENTA)
+                
+                # Log the AI decision with icons
+                direction_icon = "📈" if direction == "LONG" else "📉" if direction == "SHORT" else "⏸️"
+                color = self.Fore.BLUE if direction == "LONG" else self.Fore.RED if direction == "SHORT" else self.Fore.YELLOW
+                self.print_color(f"{direction_icon} AI Decision: {direction} ({confidence}%) - {reason}", color)
                 return direction, confidence, reason
             else:
                 self.print_color(f"DeepSeek API error: {response.status_code}", self.Fore.RED)
@@ -295,8 +329,21 @@ class RealOrderPositionTracker:
                 prices = [float(k[4]) for k in klines]
                 return {'prices': prices, 'current_price': prices[-1] if prices else 0}
             else:
-                # For paper trading, return dummy data
-                return {'prices': [100, 101, 102, 103, 104], 'current_price': 104}
+                # For paper trading, get real price data
+                try:
+                    ticker = self.binance.futures_symbol_ticker(symbol=pair) if self.binance else None
+                    if ticker:
+                        current_price = float(ticker['price'])
+                        return {'prices': [current_price] * 5, 'current_price': current_price}
+                except:
+                    pass
+                # Fallback to realistic prices
+                base_prices = {
+                    "SOLUSDT": 180.50, "AVAXUSDT": 35.20, "XRPUSDT": 0.62, 
+                    "LINKUSDT": 18.75, "DOTUSDT": 8.90
+                }
+                current_price = base_prices.get(pair, 100)
+                return {'prices': [current_price] * 5, 'current_price': current_price}
         except Exception as e:
             try:
                 if self.binance:
@@ -315,16 +362,18 @@ class RealOrderPositionTracker:
             if current_price <= 0:
                 return {"action": "HOLD", "pair": pair, "direction": "HOLD", "confidence": 0, "reason": "Invalid price"}
             
-            self.print_color(f"Analyzing {pair}...", self.Fore.BLUE)
+            self.print_color(f"🔍 Analyzing {pair} at ${current_price:.4f}...", self.Fore.BLUE)
             market_data = self.get_price_history(pair)
             market_data['current_price'] = current_price
             direction, confidence, reason = self.get_deepseek_analysis(pair, market_data)
             
             if direction == "HOLD" or confidence < 70:
-                self.print_color(f"AI Decision: HOLD ({confidence}%)", self.Fore.YELLOW)
+                self.print_color(f"⏸️ AI Decision: HOLD ({confidence}%)", self.Fore.YELLOW)
                 return {"action": "HOLD", "pair": pair, "direction": direction, "confidence": confidence, "reason": reason}
             else:
-                self.print_color(f"AI Decision: {direction} ({confidence}%)", self.Fore.GREEN)
+                direction_icon = "📈" if direction == "LONG" else "📉"
+                color = self.Fore.BLUE if direction == "LONG" else self.Fore.RED
+                self.print_color(f"🎯 AI Decision: {direction} {direction_icon} ({confidence}%)", color + self.Style.BRIGHT)
                 return {"action": "TRADE", "pair": pair, "direction": direction, "confidence": confidence, "reason": reason}
                 
         except Exception as e:
@@ -337,19 +386,22 @@ class RealOrderPositionTracker:
                 ticker = self.binance.futures_symbol_ticker(symbol=pair)
                 return float(ticker['price'])
             else:
-                # For paper trading, return a realistic price
-                base_prices = {
-                    "SOLUSDT": 180.50,
-                    "AVAXUSDT": 35.20, 
-                    "XRPUSDT": 0.62,
-                    "LINKUSDT": 18.75,
-                    "DOTUSDT": 8.90
-                }
-                base_price = base_prices.get(pair, 100)
-                # Add some random variation for realism
-                import random
-                variation = random.uniform(-0.02, 0.02)
-                return base_price * (1 + variation)
+                # For paper trading, get real price from public API
+                try:
+                    import requests
+                    url = f"https://api.binance.com/api/v3/ticker/price"
+                    params = {'symbol': pair}
+                    response = requests.get(url, params=params, timeout=5)
+                    data = response.json()
+                    return float(data['price'])
+                except:
+                    # Fallback to realistic prices
+                    base_prices = {
+                        "SOLUSDT": 180.50, "AVAXUSDT": 35.20, "XRPUSDT": 0.62,
+                        "LINKUSDT": 18.75, "DOTUSDT": 8.90
+                    }
+                    base_price = base_prices.get(pair, 100)
+                    return base_price
         except:
             return None
 
@@ -374,20 +426,21 @@ class RealOrderPositionTracker:
             # AI ALWAYS SCANS ALL PAIRS
             market_data = self.get_market_data()
             if market_data:
-                self.print_color(f"\nAI ALWAYS SCANNING {len(market_data)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
+                self.print_color(f"\n🤖 AI SCANNING {len(market_data)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
                 for pair in market_data.keys():
                     if self.can_open_new_trade(pair):
                         pair_data = {pair: market_data[pair]}
                         decision = self.get_ai_decision(pair_data)
                         if decision["action"] == "TRADE":
-                            self.print_color(f"QUALIFIED: {pair} {decision['direction']} ({decision['confidence']}%)", self.Fore.GREEN + self.Style.BRIGHT)
+                            direction_icon = "📈" if decision['direction'] == "LONG" else "📉"
+                            self.print_color(f"🚀 QUALIFIED: {pair} {decision['direction']} {direction_icon} ({decision['confidence']}%)", self.Fore.GREEN + self.Style.BRIGHT)
                             success = self.execute_trade(decision)
                             if success:
                                 pass
                         else:
-                            self.print_color(f"HOLD: {pair} ({decision['confidence']}%)", self.Fore.YELLOW)
+                            self.print_color(f"⏸️ HOLD: {pair} ({decision['confidence']}%)", self.Fore.YELLOW)
                     else:
-                        self.print_color(f"SKIPPED: {pair} (already active)", self.Fore.MAGENTA)
+                        self.print_color(f"↗️ SKIPPED: {pair} (already active)", self.Fore.MAGENTA)
             else:
                 self.print_color("No market data available", self.Fore.YELLOW)
                 
@@ -401,27 +454,27 @@ class RealOrderPositionTracker:
 
     def execute_trade(self, decision):
         # This is just a placeholder for paper trading
-        self.print_color("LIVE TRADING DISABLED - Using Paper Trading", self.Fore.YELLOW)
+        self.print_color("💡 LIVE TRADING DISABLED - Using Paper Trading", self.Fore.YELLOW)
         return False
 
     def display_dashboard(self):
-        self.print_color(f"\nDASHBOARD - {self.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
+        self.print_color(f"\n📊 DASHBOARD - {self.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
         self.print_color("=" * 80, self.Fore.CYAN)
-        self.print_color("LIVE TRADING DISABLED - PAPER TRADING MODE", self.Fore.YELLOW)
+        self.print_color("💡 LIVE TRADING DISABLED - PAPER TRADING MODE", self.Fore.YELLOW)
 
     def start_trading(self):
-        self.print_color("STARTING FINAL AI ALWAYS SCAN BOT!", self.Fore.CYAN + self.Style.BRIGHT)
+        self.print_color("🚀 STARTING FINAL AI ALWAYS SCAN BOT!", self.Fore.CYAN + self.Style.BRIGHT)
         self.cycle_count = 0
         while True:
             try:
                 self.cycle_count += 1
-                self.print_color(f"\nCYCLE {self.cycle_count}", self.Fore.CYAN)
+                self.print_color(f"\n🔄 CYCLE {self.cycle_count}", self.Fore.CYAN)
                 self.print_color("=" * 50, self.Fore.CYAN)
                 self.run_trading_cycle()
-                self.print_color(f"Waiting 30 seconds...", self.Fore.BLUE)
+                self.print_color(f"⏰ Waiting 30 seconds...", self.Fore.BLUE)
                 time.sleep(30)
             except KeyboardInterrupt:
-                self.print_color(f"\nBOT STOPPED", self.Fore.RED + self.Style.BRIGHT)
+                self.print_color(f"\n🛑 BOT STOPPED", self.Fore.RED + self.Style.BRIGHT)
                 self.show_trade_history(10)
                 break
             except Exception as e:
@@ -458,16 +511,18 @@ class AIPaperTradingBot:
             if quantity is None:
                 return False
             
-            # TP/SL calculation
+            # Better TP/SL calculation for both directions
             if direction == "LONG":
-                tp_raw = current_price * 1.008
-                sl_raw = current_price * 0.995
-            else:
-                tp_raw = current_price * 0.992
-                sl_raw = current_price * 1.005
+                take_profit = current_price * 1.008   # +0.8%
+                stop_loss = current_price * 0.995     # -0.5%
+                tp_sl_ratio = "TP: +0.8% | SL: -0.5%"
+            else:  # SHORT
+                take_profit = current_price * 0.992   # -0.8%  
+                stop_loss = current_price * 1.005     # +0.5%
+                tp_sl_ratio = "TP: -0.8% | SL: +0.5%"
             
-            take_profit = self.real_bot.format_price(pair, tp_raw)
-            stop_loss = self.real_bot.format_price(pair, sl_raw)
+            take_profit = self.real_bot.format_price(pair, take_profit)
+            stop_loss = self.real_bot.format_price(pair, stop_loss)
             
             # Paper position ကို record လုပ်မယ်
             self.paper_positions[pair] = {
@@ -485,9 +540,12 @@ class AIPaperTradingBot:
             
             # Real bot ရဲ့ display ကိုသုံးမယ်
             direction_color = self.real_bot.Fore.BLUE if direction == 'LONG' else self.real_bot.Fore.RED
-            self.real_bot.print_color(f"📝 PAPER TRADE EXECUTED: {pair} {direction}", direction_color)
+            direction_icon = "📈" if direction == 'LONG' else "📉"
+            
+            self.real_bot.print_color(f"📝 {direction_icon} PAPER TRADE EXECUTED: {pair} {direction}", direction_color)
             self.real_bot.print_color(f"   Size: {quantity} | Entry: ${current_price:.4f}", self.real_bot.Fore.WHITE)
             self.real_bot.print_color(f"   TP: ${take_profit:.4f} | SL: ${stop_loss:.4f}", self.real_bot.Fore.YELLOW)
+            self.real_bot.print_color(f"   {tp_sl_ratio}", self.real_bot.Fore.CYAN)
             self.real_bot.print_color(f"   AI Confidence: {confidence}%", self.real_bot.Fore.MAGENTA)
             
             return True
@@ -548,7 +606,8 @@ class AIPaperTradingBot:
                     
                     # Display result
                     pnl_color = self.real_bot.Fore.GREEN if pnl > 0 else self.real_bot.Fore.RED
-                    self.real_bot.print_color(f"📊 PAPER TRADE CLOSED: {pair} {trade['direction']}", pnl_color)
+                    direction_icon = "📈" if trade['direction'] == 'LONG' else "📉"
+                    self.real_bot.print_color(f"📊 {direction_icon} PAPER TRADE CLOSED: {pair} {trade['direction']}", pnl_color)
                     self.real_bot.print_color(f"   Exit: ${current_price:.4f} | P&L: ${pnl:.2f}", pnl_color)
                     self.real_bot.print_color(f"   Reason: {close_reason}", self.real_bot.Fore.YELLOW)
                     
@@ -615,8 +674,9 @@ class AIPaperTradingBot:
         for i, trade in enumerate(reversed(self.paper_history[-limit:])):
             pnl = trade.get('pnl', 0)
             pnl_color = self.real_bot.Fore.GREEN if pnl > 0 else self.real_bot.Fore.RED if pnl < 0 else self.real_bot.Fore.YELLOW
+            direction_icon = "📈" if trade['direction'] == 'LONG' else "📉"
             
-            self.real_bot.print_color(f"{i+1}. {trade['pair']} {trade['direction']} | Entry: ${trade.get('entry_price', 0):.4f} | Exit: ${trade.get('exit_price', 0):.4f} | P&L: ${pnl:.2f}", pnl_color)
+            self.real_bot.print_color(f"{i+1}. {direction_icon} {trade['pair']} {trade['direction']} | Entry: ${trade.get('entry_price', 0):.4f} | Exit: ${trade.get('exit_price', 0):.4f} | P&L: ${pnl:.2f}", pnl_color)
             self.real_bot.print_color(f"   TP: ${trade.get('take_profit', 0):.4f} | SL: ${trade.get('stop_loss', 0):.4f} | Reason: {trade.get('close_reason', 'N/A')}", self.real_bot.Fore.YELLOW)
 
     def run_paper_trading_cycle(self):
@@ -637,13 +697,15 @@ class AIPaperTradingBot:
                         decision = self.real_bot.get_ai_decision(pair_data)
                         
                         if decision["action"] == "TRADE":
-                            self.real_bot.print_color(f"🎯 AI PAPER SIGNAL: {pair} {decision['direction']} ({decision['confidence']}%)", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
+                            direction_icon = "📈" if decision['direction'] == "LONG" else "📉"
+                            self.real_bot.print_color(f"🎯 AI PAPER SIGNAL: {pair} {decision['direction']} {direction_icon} ({decision['confidence']}%)", self.real_bot.Fore.GREEN + self.real_bot.Style.BRIGHT)
                             self.paper_execute_trade(decision)
                         else:
-                            self.real_bot.print_color(f"⏸️  AI HOLD: {pair} ({decision['confidence']}%)", self.real_bot.Fore.YELLOW)
+                            self.real_bot.print_color(f"⏸️ AI HOLD: {pair} ({decision['confidence']}%)", self.real_bot.Fore.YELLOW)
                     else:
                         if pair in self.paper_positions:
-                            self.real_bot.print_color(f"↗️  ACTIVE PAPER POSITION: {pair}", self.real_bot.Fore.MAGENTA)
+                            direction_icon = "📈" if self.paper_positions[pair]['direction'] == 'LONG' else "📉"
+                            self.real_bot.print_color(f"↗️ ACTIVE PAPER POSITION: {pair} {direction_icon}", self.real_bot.Fore.MAGENTA)
             
             # Show portfolio status
             self.get_paper_portfolio_status()
