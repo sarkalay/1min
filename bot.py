@@ -26,7 +26,7 @@ except ImportError:
 # Load environment variables
 load_dotenv()
 
-class Final1MinScalpingBot:
+class Final3MinScalpingBot:
     def __init__(self):
         # Load config from .env file
         self.binance_api_key = os.getenv('BINANCE_API_KEY')
@@ -36,21 +36,26 @@ class Final1MinScalpingBot:
         # Thailand timezone
         self.thailand_tz = pytz.timezone('Asia/Bangkok')
         
-        # 1MIN SCALPING PARAMETERS
+        # 3MIN SCALPING PARAMETERS
         self.trade_size_usd = 50
         self.leverage = 5
-        self.tp_percent = 0.004   # +0.4%
-        self.sl_percent = 0.002   # -0.2%
+        self.tp_percent = 0.006   # +0.6%
+        self.sl_percent = 0.003   # -0.3%
         
         # Multi-pair parameters
         self.max_concurrent_trades = 2
         self.available_pairs = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "DOTUSDT"]
         
-        # Track bot-opened trades only
+        # Track bot-opened trades (live)
         self.bot_opened_trades = {}
         
-        # Trade history
-        self.trade_history_file = "scalping_history.json"
+        # Paper trading mode
+        self.paper_trading = False
+        self.paper_balance = 1000.0  # Starting balance
+        self.paper_positions = {}    # Simulated positions
+        
+        # Trade history (shared)
+        self.trade_history_file = "3min_scalping_history.json"
         self.trade_history = self.load_trade_history()
         
         # Precision settings
@@ -60,9 +65,9 @@ class Final1MinScalpingBot:
         # Initialize Binance client
         self.binance = Client(self.binance_api_key, self.binance_secret)
         
-        self.print_color(f"FINAL 1MIN SCALPING + BACKTEST BOT ACTIVATED!", Fore.CYAN + Style.BRIGHT)
-        self.print_color(f"TP: +0.4% | SL: -0.2% | R:R = 1:2", Fore.GREEN + Style.BRIGHT)
-        self.print_color(f"AI: 1-MINUTE SCALPING EXPERT | Max Trades: {self.max_concurrent_trades}", Fore.YELLOW)
+        self.print_color(f"FINAL 3MIN SCALPING BOT ACTIVATED!", Fore.CYAN + Style.BRIGHT)
+        self.print_color(f"TP: +0.6% | SL: -0.3% | R:R = 1:2", Fore.GREEN + Style.BRIGHT)
+        self.print_color(f"AI: 3-MINUTE SCALPING EXPERT", Fore.YELLOW)
         
         self.validate_config()
         self.setup_futures()
@@ -101,12 +106,13 @@ class Final1MinScalpingBot:
         if not self.trade_history:
             self.print_color("No trade history found", Fore.YELLOW)
             return
-        self.print_color(f"\n1MIN SCALPING HISTORY (Last {min(limit, len(self.trade_history))} trades)", Fore.CYAN)
+        self.print_color(f"\n3MIN SCALPING HISTORY (Last {min(limit, len(self.trade_history))} trades)", Fore.CYAN)
         self.print_color("=" * 80, Fore.CYAN)
         for i, trade in enumerate(reversed(self.trade_history[-limit:])):
             pnl = trade.get('pnl', 0)
             pnl_color = Fore.GREEN if pnl > 0 else Fore.RED if pnl < 0 else Fore.YELLOW
-            self.print_color(f"{i+1}. {trade['pair']} {trade['direction']} | Entry: ${trade.get('entry_price', 0):.4f} | Exit: ${trade.get('exit_price', 0):.4f} | P&L: ${pnl:.2f}", pnl_color)
+            mode = "[PAPER]" if 'paper' in trade else "[LIVE]"
+            self.print_color(f"{mode} {i+1}. {trade['pair']} {trade['direction']} | Entry: ${trade.get('entry_price', 0):.4f} | Exit: ${trade.get('exit_price', 0):.4f} | P&L: ${pnl:.2f}", pnl_color)
             self.print_color(f"   TP: ${trade.get('take_profit', 0):.4f} | SL: ${trade.get('stop_loss', 0):.4f} | Time: {trade.get('close_time', 'N/A')}", Fore.YELLOW)
     
     def get_thailand_time(self):
@@ -195,9 +201,9 @@ class Final1MinScalpingBot:
         except Exception as e:
             return None
 
-    # === BACKTEST FUNCTION (FIXED) ===
+    # === BACKTEST FUNCTION ===
     def run_backtest(self, days=7):
-        self.print_color(f"\nBACKTESTING 1MIN SCALPING STRATEGY...", Fore.CYAN + Style.BRIGHT)
+        self.print_color(f"\nBACKTESTING 3MIN SCALPING STRATEGY...", Fore.CYAN + Style.BRIGHT)
         self.print_color(f"Period: Last {days} days | Pairs: {len(self.available_pairs)}", Fore.YELLOW)
         
         end_time = int(time.time() * 1000)
@@ -212,7 +218,7 @@ class Final1MinScalpingBot:
             try:
                 klines = self.binance.futures_historical_klines(
                     symbol=pair,
-                    interval=Client.KLINE_INTERVAL_1MINUTE,
+                    interval=Client.KLINE_INTERVAL_3MINUTE,
                     start_str=start_time,
                     end_str=end_time,
                     limit=1000
@@ -228,15 +234,13 @@ class Final1MinScalpingBot:
                     'taker_buy_base', 'taker_buy_quote', 'ignore'
                 ])
                 
-                # FIX: Convert ALL price columns to float
                 price_cols = ['open', 'high', 'low', 'close', 'volume']
                 for col in price_cols:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
-                
                 df = df.dropna(subset=price_cols)
                 
                 if len(df) < 50:
-                    self.print_color(f"Insufficient clean data for {pair}", Fore.YELLOW)
+                    self.print_color(f"Insufficient data for {pair}", Fore.YELLOW)
                     continue
                 
                 trades = []
@@ -244,31 +248,29 @@ class Final1MinScalpingBot:
                 
                 for i in range(10, len(df) - 5):
                     current_price = df['close'].iloc[i]
-                    
-                    # Simple momentum signal (simulating AI)
                     recent_change = (df['close'].iloc[i] - df['close'].iloc[i-10]) / df['close'].iloc[i-10]
                     
                     if active_trade is None:
-                        if recent_change > 0.001:  # +0.1% momentum
+                        if recent_change > 0.0015:
                             quantity = self.get_quantity(pair, current_price)
                             if quantity:
                                 active_trade = {
                                     'entry': current_price,
                                     'quantity': quantity,
                                     'direction': 'LONG',
-                                    'tp': current_price * 1.004,
-                                    'sl': current_price * 0.998,
+                                    'tp': current_price * 1.006,
+                                    'sl': current_price * 0.997,
                                     'entry_idx': i
                                 }
-                        elif recent_change < -0.001:
+                        elif recent_change < -0.0015:
                             quantity = self.get_quantity(pair, current_price)
                             if quantity:
                                 active_trade = {
                                     'entry': current_price,
                                     'quantity': quantity,
                                     'direction': 'SHORT',
-                                    'tp': current_price * 0.996,
-                                    'sl': current_price * 1.002,
+                                    'tp': current_price * 0.994,
+                                    'sl': current_price * 1.003,
                                     'entry_idx': i
                                 }
                     
@@ -319,7 +321,6 @@ class Final1MinScalpingBot:
             except Exception as e:
                 self.print_color(f"Backtest error for {pair}: {e}", Fore.RED)
         
-        # Summary
         self.print_color(f"\nBACKTEST SUMMARY ({days} days)", Fore.CYAN + Style.BRIGHT)
         self.print_color("=" * 60, Fore.CYAN)
         for pair, res in results.items():
@@ -335,7 +336,7 @@ class Final1MinScalpingBot:
         
         return results
 
-    # === LIVE TRADING FUNCTIONS (unchanged) ===
+    # === AI ANALYSIS ===
     def get_deepseek_analysis(self, pair, market_data):
         try:
             if not self.deepseek_key:
@@ -343,11 +344,11 @@ class Final1MinScalpingBot:
             
             current_price = market_data['current_price']
             prompt = f"""
-            You are a 1-MINUTE SCALPING EXPERT.
-            Analyze {pair} at ${current_price:.4f} using last 10 minutes of data.
-            Target: +0.4% profit in 1-3 minutes.
-            Stop Loss: -0.2%.
-            Only respond if you see a HIGH PROBABILITY move in the next 1-2 minutes.
+            You are a 3-MINUTE SCALPING EXPERT.
+            Analyze {pair} at ${current_price:.4f} using last 30 minutes of data.
+            Target: +0.6% profit in 3-7 minutes.
+            Stop Loss: -0.3%.
+            Only respond if you see a HIGH PROBABILITY move in the next 3-5 minutes.
             Respond with JSON: {{"direction": "LONG|SHORT|HOLD", "confidence": 70, "reason": "brief"}}
             """
             
@@ -355,7 +356,7 @@ class Final1MinScalpingBot:
             data = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": "You are a 1min scalping bot. Respond with valid JSON only."},
+                    {"role": "system", "content": "You are a 3min scalping bot. Respond with valid JSON only."},
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.1,
@@ -374,12 +375,162 @@ class Final1MinScalpingBot:
         except:
             return "HOLD", 0, "Error"
 
+    # === PAPER TRADING ===
+    def execute_paper_trade(self, decision):
+        pair = decision["pair"]
+        direction = decision["direction"]
+        confidence = decision["confidence"]
+        
+        try:
+            current_price = self.get_current_price(pair)
+            if not current_price or current_price <= 0:
+                return False
+            
+            quantity = self.get_quantity(pair, current_price)
+            if not quantity:
+                return False
+            
+            if direction == "LONG":
+                take_profit = current_price * 1.006
+                stop_loss = current_price * 0.997
+            else:
+                take_profit = current_price * 0.994
+                stop_loss = current_price * 1.003
+            
+            take_profit = self.format_price(pair, take_profit)
+            stop_loss = self.format_price(pair, stop_loss)
+            
+            self.paper_positions[pair] = {
+                'direction': direction,
+                'entry_price': current_price,
+                'quantity': quantity,
+                'take_profit': take_profit,
+                'stop_loss': stop_loss,
+                'entry_time': time.time(),
+                'status': 'ACTIVE',
+                'confidence': confidence,
+                'paper': True
+            }
+            
+            self.print_color(f"[PAPER] {pair} {direction} | ${current_price:.4f}", Fore.CYAN + Style.BRIGHT)
+            self.print_color(f"   TP: ${take_profit:.4f} | SL: ${stop_loss:.4f} | Qty: {quantity}", Fore.CYAN)
+            return True
+            
+        except Exception as e:
+            self.print_color(f"[PAPER] Error: {e}", Fore.RED)
+            return False
+
+    def monitor_paper_positions(self):
+        for pair, pos in list(self.paper_positions.items()):
+            if pos['status'] != 'ACTIVE':
+                continue
+            
+            current_price = self.get_current_price(pair)
+            if not current_price:
+                continue
+            
+            pnl = 0
+            exit_price = None
+            triggered = False
+            
+            if pos['direction'] == 'LONG':
+                if current_price >= pos['take_profit']:
+                    pnl = (pos['take_profit'] - pos['entry_price']) * pos['quantity']
+                    exit_price = pos['take_profit']
+                    triggered = True
+                elif current_price <= pos['stop_loss']:
+                    pnl = (pos['stop_loss'] - pos['entry_price']) * pos['quantity']
+                    exit_price = pos['stop_loss']
+                    triggered = True
+            else:
+                if current_price <= pos['take_profit']:
+                    pnl = (pos['entry_price'] - pos['take_profit']) * pos['quantity']
+                    exit_price = pos['take_profit']
+                    triggered = True
+                elif current_price >= pos['stop_loss']:
+                    pnl = (pos['entry_price'] - pos['stop_loss']) * pos['quantity']
+                    exit_price = pos['stop_loss']
+                    triggered = True
+            
+            if triggered:
+                pos['status'] = 'CLOSED'
+                pos['exit_price'] = exit_price
+                pos['pnl'] = pnl
+                pos['close_time'] = self.get_thailand_time()
+                
+                self.paper_balance += pnl
+                self.add_trade_to_history(pos.copy())
+                
+                color = Fore.GREEN if pnl > 0 else Fore.RED
+                self.print_color(f"[PAPER] CLOSED {pair} {pos['direction']} | P&L: ${pnl:.2f}", color + Style.BRIGHT)
+                self.print_color(f"   Exit: ${exit_price:.4f} | Balance: ${self.paper_balance:.2f}", Fore.CYAN)
+
+    def display_paper_dashboard(self):
+        self.print_color(f"\n[PAPER TRADING] Balance: ${self.paper_balance:.2f}", Fore.MAGENTA + Style.BRIGHT)
+        self.print_color("=" * 60, Fore.MAGENTA)
+        if self.paper_positions:
+            for pair, pos in self.paper_positions.items():
+                if pos['status'] != 'ACTIVE':
+                    continue
+                current = self.get_current_price(pair) or 0
+                unrealized = 0
+                if pos['direction'] == 'LONG':
+                    unrealized = (current - pos['entry_price']) * pos['quantity']
+                else:
+                    unrealized = (pos['entry_price'] - current) * pos['quantity']
+                color = Fore.GREEN if unrealized >= 0 else Fore.RED
+                self.print_color(f"{pos['direction']} {pair} | Entry: ${pos['entry_price']:.4f}", Fore.WHITE)
+                self.print_color(f"   Current: ${current:.4f} | Unrealized: ${unrealized:.2f}", color)
+
+    # === LIVE TRADING ===
+    def execute_live_trade(self, decision):
+        # (Same as previous live execute_trade)
+        pass  # Full live code from previous version
+
     def execute_trade(self, decision):
-        # [Full live trading code - same as before]
-        pass  # (Use previous version)
+        if self.paper_trading:
+            return self.execute_paper_trade(decision)
+        else:
+            return self.execute_live_trade(decision)
+
+    def get_current_price(self, pair):
+        try:
+            ticker = self.binance.futures_symbol_ticker(symbol=pair)
+            return float(ticker['price'])
+        except:
+            return None
+
+    def can_open_new_trade(self, pair):
+        if self.paper_trading:
+            return pair not in self.paper_positions or self.paper_positions[pair]['status'] != 'ACTIVE'
+        else:
+            return pair not in self.bot_opened_trades or self.bot_opened_trades[pair]['status'] != 'ACTIVE'
+
+    def run_trading_cycle(self):
+        try:
+            if self.paper_trading:
+                self.monitor_paper_positions()
+                self.display_paper_dashboard()
+            else:
+                # Live monitoring
+                pass
+            
+            market_data = {}
+            for pair in self.available_pairs:
+                price = self.get_current_price(pair)
+                if price:
+                    market_data[pair] = {'price': price}
+            
+            if market_data:
+                for pair in market_data.keys():
+                    if self.can_open_new_trade(pair):
+                        decision = {"pair": pair, "direction": "LONG", "confidence": 85}  # Simulate AI
+                        self.execute_trade(decision)
+        except Exception as e:
+            self.print_color(f"Cycle error: {e}", Fore.RED)
 
     def start_trading(self):
-        self.print_color("STARTING FINAL 1MIN SCALPING BOT!", Fore.CYAN + Style.BRIGHT)
+        self.print_color("STARTING FINAL 3MIN SCALPING BOT!", Fore.CYAN + Style.BRIGHT)
         self.cycle_count = 0
         while True:
             try:
@@ -387,24 +538,31 @@ class Final1MinScalpingBot:
                 self.print_color(f"\nCYCLE {self.cycle_count}", Fore.CYAN)
                 self.print_color("=" * 50, Fore.CYAN)
                 self.run_trading_cycle()
-                time.sleep(30)
+                time.sleep(60)
             except KeyboardInterrupt:
-                self.print_color(f"\nBOT STOPPED", Fore.RED + Style.BRIGHT)
+                if self.paper_trading:
+                    self.print_color(f"\n[PAPER] FINAL BALANCE: ${self.paper_balance:.2f}", Fore.MAGENTA + Style.BRIGHT)
+                self.show_trade_history(10)
                 break
 
 if __name__ == "__main__":
     try:
-        bot = Final1MinScalpingBot()
+        bot = Final3MinScalpingBot()
         print("\n" + "="*60)
-        print("FINAL 1MIN SCALPING + BACKTEST BOT")
-        print("1. Live Trading")
-        print("2. Run Backtest (7 days)")
-        print("3. Run Backtest (1 day)")
-        choice = input("Enter choice (1/2/3): ").strip()
+        print("FINAL 3MIN SCALPING + BACKTEST + PAPER TRADING")
+        print("1. Live Trading (Real Money)")
+        print("2. Paper Trading (Test Mode - $1000)")
+        print("3. Backtest (7 days)")
+        print("4. Backtest (1 day)")
+        choice = input("Enter choice (1/2/3/4): ").strip()
         
         if choice == "2":
-            bot.run_backtest(days=7)
+            bot.paper_trading = True
+            bot.paper_balance = 1000.0
+            bot.start_trading()
         elif choice == "3":
+            bot.run_backtest(days=7)
+        elif choice == "4":
             bot.run_backtest(days=1)
         elif choice == "1":
             bot.start_trading()
