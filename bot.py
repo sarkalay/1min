@@ -235,6 +235,10 @@ def add_trade_to_history(self, trade_data):
         if LEARN_SCRIPT_AVAILABLE:
             self.learn_from_mistake(trade_data)
             self.adaptive_learning_adjustment()  # ← ထည့်ပါ
+
+        if trade_data.get('pnl', 0) < 0:
+                os.system("python3 train_ml_model.py > /dev/null 2>&1 &")
+                self.print_color("🧠 AI က loss ကနေ ချက်ချင်း သင်ယူနေပြီ (real-time learning)", self.Fore.MAGENTA + self.Style.BRIGHT)
         
         # Update performance stats
         self.performance_stats['total_trades'] += 1
